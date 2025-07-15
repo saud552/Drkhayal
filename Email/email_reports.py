@@ -58,6 +58,8 @@ def initialize_storage():
 initialize_storage()
 
 # ------------ Conversation states ------------
+EMAIL_MENU = 0
+MANAGE_MENU = 10
 GET_NUMBER = 1
 GET_EMAILS = 2
 GET_SUBJECT = 3
@@ -67,6 +69,8 @@ GET_DELAY = 6
 CONFIRM = 7
 ADD_EMAILS = 8
 DELETE_EMAIL = 9
+PROCESS_ADD_EMAILS = 11
+PROCESS_DELETE_EMAIL = 12
 
 # زر الرجوع العام
 BACK_BUTTON = InlineKeyboardButton('رجوع', callback_data='back')
@@ -149,6 +153,56 @@ class SMTPClient:
                 try: os.remove(p)
                 except: pass
  
+# --- دوال مساعدة للقوائم ---
+async def back_to_email_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """العودة للقائمة الرئيسية للبريد الإلكتروني"""
+    await update.callback_query.answer()
+    return await start_email(update, context)
+
+async def manage_emails_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """قائمة إدارة حسابات البريد الإلكتروني"""
+    await update.callback_query.answer()
+    return await manage_emails(update, context)
+
+async def start_campaign_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """بدء تدفق الحملة"""
+    await update.callback_query.answer()
+    return await get_number(update, context)
+
+async def ask_add_emails(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """طلب إضافة حسابات بريد إلكتروني"""
+    await update.callback_query.answer()
+    return await add_emails_callback(update, context)
+
+async def ask_delete_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """طلب حذف حساب بريد إلكتروني"""
+    await update.callback_query.answer()
+    return await delete_email_callback(update, context)
+
+async def show_emails_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض قائمة حسابات البريد الإلكتروني"""
+    await update.callback_query.answer()
+    return await show_emails_callback(update, context)
+
+# --- دوال معالجة الملفات والمرفقات ---
+async def get_attachments_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة رفع المرفقات"""
+    return await get_attachments(update, context)
+
+async def ask_delay(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """طلب تحديد التأخير"""
+    await update.callback_query.answer()
+    return await get_delay(update, context)
+
+async def get_delay_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة إدخال التأخير"""
+    return await get_delay(update, context)
+
+async def confirm_and_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تأكيد وإرسال الحملة"""
+    await update.callback_query.answer()
+    return await confirm_send_callback(update, context)
+
 async def start_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.callback_query.from_user.id
     await update.callback_query.answer()
@@ -658,18 +712,18 @@ email_conv_handler = ConversationHandler(
         # حالات إدارة الحسابات
         MANAGE_MENU: [
             CallbackQueryHandler(ask_add_emails, pattern='^add_emails$'),
-            CallbackQuery_handler(ask_delete_email, pattern='^delete_email$'),
+            CallbackQueryHandler(ask_delete_email, pattern='^delete_email$'),
             CallbackQueryHandler(show_emails_list, pattern='^show_emails$'),
             CallbackQueryHandler(back_to_email_menu, pattern='^back_to_email_menu$'),
         ],
-        PROCESS_ADD_EMAILS: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_add_emails_input)],
-        PROCESS_DELETE_EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_delete_email_input)],
+        PROCESS_ADD_EMAILS: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_add_emails)],
+        PROCESS_DELETE_EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_delete_email)],
         
         # حالات بدء حملة
-        GET_NUMBER: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_number_input)],
-        GET_EMAILS: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_emails_input)],
-        GET_SUBJECT: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_subject_input)],
-        GET_BODY: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_body_input)],
+        GET_NUMBER: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_number)],
+        GET_EMAILS: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_emails)],
+        GET_SUBJECT: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_subject)],
+        GET_BODY: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_body)],
         GET_ATTACHMENTS: [
             MessageHandler(filters.Document.ALL | filters.PHOTO, get_attachments_input),
             CallbackQueryHandler(ask_delay, pattern='^skip_attachments$'),
