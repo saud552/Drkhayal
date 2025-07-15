@@ -1,9 +1,9 @@
 import asyncio
 import os
 import logging
-from pytdlib import AsyncTDLibClient
-from pytdlib.api import functions as td_functions
-from pytdlib.api import types as td_types
+from aiotdlib import Client
+from aiotdlib.api import functions as td_functions
+from aiotdlib.api import types as td_types
 
 logger = logging.getLogger(__name__)
 
@@ -19,16 +19,27 @@ class TDLibClient:
         os.makedirs(self.session_dir, exist_ok=True)
 
     async def start(self):
-        self.client = AsyncTDLibClient(
-            api_id=self.api_id,
-            api_hash=self.api_hash,
-            phone=self.phone,
-            database_directory=self.session_path,
-            files_directory=self.session_path,
-            use_message_database=True,
-            use_secret_chats=False,
-            proxy=self.proxy
-        )
+        # Configure TDLib parameters
+        tdlib_parameters = {
+            "api_id": self.api_id,
+            "api_hash": self.api_hash,
+            "database_directory": self.session_path,
+            "files_directory": self.session_path,
+            "use_message_database": True,
+            "use_secret_chats": False,
+            "system_language_code": "en",
+            "application_version": "1.0",
+            "device_model": "Desktop",
+            "system_version": "Unknown",
+            "enable_storage_optimizer": True,
+            "ignore_file_names": False,
+        }
+        
+        # Add proxy configuration if provided
+        if self.proxy:
+            tdlib_parameters["proxy"] = self.proxy
+        
+        self.client = Client(tdlib_parameters)
         await self.client.start()
         logger.info(f"TDLib client started for {self.phone}")
         return self.client

@@ -2,7 +2,7 @@
 
 # مكتبات Telegram الأساسية
 python-telegram-bot==20.3
-pytdlib
+aiotdlib>=0.27.0
 # telethon تمت إزالته - التحويل إلى TDLib
 
 # مكتبات التشفير والأمان
