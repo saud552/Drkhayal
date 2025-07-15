@@ -63,3 +63,7 @@
 ## الترخيص
 
 هذا المشروع مرخص تحت رخصة MIT.
+
+> **تنويه هام:**
+> هذا المشروع الآن يعتمد على مكتبة [TDLib](https://core.telegram.org/tdlib) عبر [pytdlib](https://github.com/NullpointerW/pytdlib) بدلاً من Telethon.
+> يجب التأكد من وجود مكتبة TDLib (tdjson) على النظام. راجع تعليمات التثبيت في [pytdlib](https://github.com/NullpointerW/pytdlib#installation).

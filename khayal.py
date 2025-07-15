@@ -26,9 +26,7 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
-from telethon import TelegramClient
-from telethon.sessions import StringSession
-from telethon.network import ConnectionTcpMTProxyRandomizedIntermediate
+from Telegram.tdlib_client import TDLibClient
 
 # --- استيراد الإعدادات الأساسية ---
 try:
@@ -219,6 +217,8 @@ async def process_proxy_links(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(f"⚠️ تم تقليل عدد البروكسيات إلى {MAX_PROXIES} (الحد الأقصى)")
 
     msg = await update.message.reply_text(f"🔍 جاري الفحص المحسن لـ {len(input_links)} بروكسي...")
+    # في جميع مواضع session_str أو StringSession، سيتم التعامل مع معرف الهاتف أو مسار الجلسة بدلاً من ذلك
+    # مثال: عند إضافة حساب جديد أو التحقق من الجلسة، استخدم TDLibClient(phone)
     session_str = accounts[0]["session"]
 
     # تحليل الروابط بالنظام المحسن

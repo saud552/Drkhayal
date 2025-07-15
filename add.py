@@ -21,19 +21,12 @@ from telegram.ext import (
     filters, ConversationHandler, ContextTypes,
     CallbackQueryHandler
 )
-from telethon import TelegramClient
-from telethon.sessions import StringSession
-from telethon.errors import (
-    SessionPasswordNeededError, FloodWaitError,
-    PhoneNumberInvalidError, PhoneCodeInvalidError,
-    PhoneCodeExpiredError, ApiIdInvalidError,
-    PhoneNumberBannedError, RPCError
-)
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.backends import default_backend
 from encryption import encrypt_session, decrypt_session
+from Telegram.tdlib_client import TDLibClient
 # ========== إعدادات التهيئة ==========
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -189,21 +182,15 @@ def restricted(func):
         return await func(update, context)
     return wrapper
 
-async def create_client() -> TelegramClient:
+async def create_client(phone: str) -> TDLibClient:
     device = get_random_device()
-    client = TelegramClient(
-        StringSession(), 
-        API_ID, 
+    client = TDLibClient(
+        API_ID,
         API_HASH,
-        device_model=device['device_model'],
-        system_version=device['system_version'],
-        app_version=device['app_version'],
-        lang_code=device['lang_code'],
-        system_lang_code=device['lang_code'],
-        connection_retries=3,
-        timeout=SESSION_TIMEOUT
+        phone,
+        session_dir='tdlib_sessions',
     )
-    client._device_attrs = device
+    await client.start()
     return client
 
 def get_categories_keyboard(page=0, action="check", only_non_empty=True):
@@ -418,8 +405,13 @@ async def add_account_session(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     try:
         # التحقق من صحة الجلسة
-        client = TelegramClient(StringSession(session_str), API_ID, API_HASH)
-        await client.connect()
+        client = TDLibClient(
+            API_ID,
+            API_HASH,
+            session_str,
+            session_dir='tdlib_sessions',
+        )
+        await client.start()
         me = await client.get_me()
         
         if not me:
@@ -609,8 +601,8 @@ async def start_phone_verification(update, context):
     
     try:
         # إنشاء عميل مؤقت
-        client = await create_client()
-        await client.connect()
+        client = await create_client(phone)
+        await client.start()
         
         # إرسال رمز التحقق مع إعدادات إضافية
         sent = await client.send_code_request(
@@ -747,7 +739,7 @@ async def add_account_password(update: Update, context: ContextTypes.DEFAULT_TYP
         await client.disconnect()
         return ConversationHandler.END
 
-async def finalize_account_registration(update: Update, context: ContextTypes.DEFAULT_TYPE, client: TelegramClient) -> int:
+async def finalize_account_registration(update: Update, context: ContextTypes.DEFAULT_TYPE, client: TDLibClient) -> int:
     """إكمال عملية تسجيل الحساب مع محاكاة تفاصيل جهاز وتطبيق رسمي"""
     try:
         # 1. جلب معلومات الحساب
@@ -1082,9 +1074,9 @@ async def check_next_account(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     # فحص الحساب
     try:
-        async with TelegramClient(
-            StringSession(decrypt_session(session_str)), 
-            API_ID, 
+        async with TDLibClient(
+            session_str,
+            API_ID,
             API_HASH,
             device_model=device_info.get('device_model', 'Unknown'),
             system_version=device_info.get('system_version', 'Unknown'),
@@ -1271,9 +1263,9 @@ async def recheck_account(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     
     # إعادة الفحص
     try:
-        async with TelegramClient(
-            StringSession(decrypt_session(session_str)), 
-            API_ID, 
+        async with TDLibClient(
+            session_str,
+            API_ID,
             API_HASH,
             device_model=device_info.get('device_model', 'Unknown'),
             system_version=device_info.get('system_version', 'Unknown'),

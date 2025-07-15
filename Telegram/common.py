@@ -13,16 +13,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import BadRequest
 from telegram.ext import ContextTypes, ConversationHandler
 
-from telethon import TelegramClient, functions, types, utils
-from telethon.errors import (
-    AuthKeyDuplicatedError,
-    FloodWaitError,
-    PeerFloodError,
-    SessionPasswordNeededError,
-    RPCError  
-)
-from telethon.network import ConnectionTcpMTProxyRandomizedIntermediate
-from telethon.sessions import StringSession
+from Telegram.tdlib_client import TDLibClient
 from encryption import decrypt_session
 from config import API_ID, API_HASH
 from add import safe_db_query
@@ -108,7 +99,7 @@ def get_categories():
 
 def get_accounts(category_id):
     query = """
-        SELECT id, session_str, phone, device_info, 
+        SELECT id, phone, device_info, 
                proxy_type, proxy_server, proxy_port, proxy_secret
         FROM accounts
         WHERE category_id = ?
@@ -118,20 +109,17 @@ def get_accounts(category_id):
     accounts = []
     for row in results:
         try:
-            decrypted_session = decrypt_session(row[1])
             accounts.append({
                 "id": row[0],
-                "session": decrypted_session,
-                "phone": row[2],
-                "device_info": eval(row[3]) if row[3] else {},
-                "proxy_type": row[4],
-                "proxy_server": row[5],
-                "proxy_port": row[6],
-                "proxy_secret": row[7],
+                "phone": row[1],
+                "device_info": eval(row[2]) if row[2] else {},
+                "proxy_type": row[3],
+                "proxy_server": row[4],
+                "proxy_port": row[5],
+                "proxy_secret": row[6],
             })
         except Exception as e:
-            logging.error(f"خطأ في فك تشفير الجلسة للحساب {row[0]}: {str(e)}")
-    
+            logging.error(f"خطأ في معالجة الحساب {row[0]}: {str(e)}")
     return accounts
 
 def parse_proxy_link(link: str) -> dict | None:
@@ -259,7 +247,7 @@ class ProxyChecker:
             )
             
             # إنشاء العميل والتوصيل
-            client = TelegramClient(StringSession(session_str), **params)
+            client = TDLibClient(session_str, **params)
             await client.connect()
             
             # قياس سرعة الاتصال
@@ -359,7 +347,7 @@ proxy_checker = ProxyChecker()
 # --- الفئة الأساسية المحسنة لتنفيذ البلاغات ---
 class AdvancedReporter:
     """فئة مخصصة لتنظيم وتنفيذ عمليات الإبلاغ مع دعم تدوير البروكسي"""
-    def __init__(self, client: TelegramClient, context: ContextTypes.DEFAULT_TYPE):
+    def __init__(self, client: TDLibClient, context: ContextTypes.DEFAULT_TYPE):
         self.client = client
         self.context = context
         self.stats = {"success": 0, "failed": 0, "last_report": None}
@@ -616,7 +604,7 @@ async def do_session_report(session_data: dict, config: dict, context: ContextTy
                 })
                 logger.info(f"Using proxy: {current_proxy['server']} (converted secret)")
             
-            client = TelegramClient(StringSession(session_str), **params)
+            client = TDLibClient(session_str, **params)
             await client.connect()
             
             # التحقق من تفعيل الجلسة

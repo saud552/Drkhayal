@@ -6,6 +6,8 @@ from cryptography.hazmat.backends import default_backend
 import base64
 import os
 
+# ملاحظة: مع TDLib، لا حاجة لتشفير الجلسة (session_str) لأن كل حساب له ملف state خاص به.
+# هذه الدوال موجودة فقط لدعم التوافق مع قاعدة البيانات القديمة أو في حال الحاجة مستقبلاً.
 def get_cipher():
     SALT = os.getenv('ENCRYPTION_SALT', 'default_salt').encode()
     PASSPHRASE = os.getenv('ENCRYPTION_PASSPHRASE', 'default_pass').encode()

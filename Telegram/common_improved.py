@@ -17,21 +17,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import BadRequest
 from telegram.ext import ContextTypes, ConversationHandler
 
-from telethon import TelegramClient, functions, types, utils
-from telethon.errors import (
-    AuthKeyDuplicatedError,
-    FloodWaitError,
-    PeerFloodError,
-    SessionPasswordNeededError,
-    RPCError,
-    TimeoutError as TelethonTimeoutError,
-    ChatWriteForbiddenError,
-    UserBannedInChannelError,
-    MessageIdInvalidError,
-    PeerIdInvalidError
-)
-from telethon.network import ConnectionTcpMTProxyRandomizedIntermediate
-from telethon.sessions import StringSession
+from Telegram.tdlib_client import TDLibClient
 from encryption import decrypt_session
 from config import API_ID, API_HASH
 from add import safe_db_query
@@ -207,7 +193,7 @@ class EnhancedProxyChecker:
             
             # اختبار الاتصال الأولي
             start_time = time.time()
-            client = TelegramClient(StringSession(session_str), **params)
+            client = TDLibClient(session_str)
             
             # اختبار الاتصال مع timeout
             await asyncio.wait_for(client.connect(), timeout=PROXY_CHECK_TIMEOUT)
@@ -352,7 +338,7 @@ class EnhancedProxyChecker:
 class VerifiedReporter:
     """نظام إبلاغ محسن مع تأكيد الإرسال والتحقق من النجاح"""
     
-    def __init__(self, client: TelegramClient, context: ContextTypes.DEFAULT_TYPE):
+    def __init__(self, client: TDLibClient, context: ContextTypes.DEFAULT_TYPE):
         self.client = client
         self.context = context
         self.stats = {
@@ -1022,7 +1008,7 @@ async def execute_single_report_task(session: dict, target: any, config: dict,
             })
         
         # الاتصال مع فحص الإلغاء
-        client = TelegramClient(StringSession(session_str), **params)
+        client = TDLibClient(session_str)
         
         # اتصال مع timeout قصير لسرعة الاستجابة للإلغاء
         connect_task = asyncio.create_task(client.connect())
@@ -1224,7 +1210,7 @@ async def process_enhanced_session(session: dict, targets: list, reports_per_acc
             })
         
         # الاتصال
-        client = TelegramClient(StringSession(session_str), **params)
+        client = TDLibClient(session_str)
         await client.connect()
         
         if not await client.is_user_authorized():

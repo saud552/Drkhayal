@@ -17,6 +17,7 @@ from telegram.ext import (
     CommandHandler,
 )
 import logging
+from Telegram.tdlib_client import TDLibClient
 
 # Set up logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -141,7 +142,7 @@ async def process_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "proxy": (current_proxy["server"], current_proxy["port"], current_proxy["secret"])
                 })
             
-            client = TelegramClient(StringSession(session_str), **params)
+            client = TDLibClient(session_str, **params)
             
             # تحديث رسالة التحقق
             try:
@@ -445,7 +446,7 @@ async def fetch_posts(update: Update, context: ContextTypes.DEFAULT_TYPE, from_c
                     "proxy": (current_proxy["server"], current_proxy["port"], current_proxy["secret"])
                 })
             
-            client = TelegramClient(StringSession(session_str), **params)
+            client = TDLibClient(session_str, **params)
             
             # تحديث رسالة التحميل
             try:
