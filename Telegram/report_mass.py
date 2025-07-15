@@ -32,6 +32,7 @@ except ImportError:
     # For now, we'll let it proceed but expect issues if not set.
 
 from .common import run_report_process, cancel_operation, REPORT_TYPES, parse_message_link
+from .common_improved import run_enhanced_report_process
 
 # States
 (
@@ -547,7 +548,7 @@ async def confirm_and_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["operation_status_message"] = msg
         
         # بدء عملية الإبلاغ في الخلفية
-        asyncio.create_task(run_report_process(update, context))
+        asyncio.create_task(run_enhanced_report_process(update, context))
         
         # Initial quick update after a short delay
         await asyncio.sleep(2)
