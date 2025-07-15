@@ -17,6 +17,7 @@ from telegram.ext import (
     CommandHandler,
 )
 import logging
+from Telegram.tdlib_client import TDLibClient
 
 # Set up logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -107,12 +108,12 @@ async def process_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     last_error = None
     proxies = context.user_data.get("proxies", [])
     
-    for attempt, session_data in enumerate(accounts[:3]):  # نجرب أول 3 حسابات فقط للسرعة
-        session_str = session_data.get("session")
-        session_id = session_data.get("id", f"حساب-{attempt+1}")
+    for attempt, account in enumerate(accounts[:3]):  # نجرب أول 3 حسابات فقط للسرعة
+        phone = account.get("phone")
+        session_id = account.get("id", f"حساب-{attempt+1}")
         
-        if not session_str:
-            logger.warning(f"تخطي الحساب {session_id}: جلسة فارغة")
+        if not phone:
+            logger.warning(f"تخطي الحساب {session_id}: رقم هاتف فارغ")
             continue
         
         client = None
@@ -125,23 +126,7 @@ async def process_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 current_proxy = random.choice(proxies)
             
             # إعداد العميل مع البروكسي
-            params = {
-                "api_id": API_ID,
-                "api_hash": API_HASH,
-                "timeout": 20,
-                "device_model": f"ChannelChecker-{session_id}",
-                "system_version": "4.0.0",
-                "app_version": "4.0.0"
-            }
-            
-            if current_proxy:
-                from telethon.network import ConnectionTcpMTProxyRandomizedIntermediate
-                params.update({
-                    "connection": ConnectionTcpMTProxyRandomizedIntermediate,
-                    "proxy": (current_proxy["server"], current_proxy["port"], current_proxy["secret"])
-                })
-            
-            client = TelegramClient(StringSession(session_str), **params)
+            client = TDLibClient(API_ID, API_HASH, phone, proxy=current_proxy)
             
             # تحديث رسالة التحقق
             try:
@@ -149,54 +134,29 @@ async def process_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
             
-            await client.connect()
+            await client.start()
             
             if not await client.is_user_authorized():
                 logger.warning(f"الحساب {session_id} غير مفوض")
                 continue
             
             # محاولة جلب معلومات القناة
-            entity = await client.get_entity(channel_link)
+            entity = await client.resolve_target(channel_link)
             
             # تجربة جلب منشور واحد للتأكد من إمكانية الوصول
-            try:
-                async for message in client.iter_messages(entity, limit=1):
-                    break  # إذا تمكن من جلب رسالة واحدة، فالوصول متاح
-            except ChannelPrivateError:
-                logger.warning(f"الحساب {session_id} لا يستطيع الوصول للقناة الخاصة")
-                continue
-            except Exception as access_error:
-                logger.warning(f"خطأ في الوصول للقناة من الحساب {session_id}: {access_error}")
-                continue
+            if entity:
+                successful_validation = True
+                logger.info(f"✅ تم التحقق من القناة بنجاح باستخدام الحساب {session_id}")
+                break
             
-            successful_validation = True
-            logger.info(f"✅ تم التحقق من القناة بنجاح باستخدام الحساب {session_id}")
-            break
-            
-        except (ValueError, UsernameNotOccupiedError):
-            last_error = "رابط القناة أو اسم المستخدم غير صالح"
-            logger.warning(f"رابط غير صالح مع الحساب {session_id}")
-            # لا نكمل مع باقي الحسابات إذا كان الرابط غير صالح
-            break
-            
-        except ChannelPrivateError:
-            last_error = f"القناة خاصة أو الحساب {session_id} ليس عضواً فيها"
-            logger.warning(last_error)
-            
-        except FloodWaitError as e:
-            last_error = f"حد المعدل للحساب {session_id}: انتظار {e.seconds} ثانية"
-            logger.warning(last_error)
-            
-        except Exception as e:
-            last_error = f"خطأ في الحساب {session_id}: {str(e)}"
-            logger.error(last_error, exc_info=True)
+        except Exception as access_error:
+            logger.warning(f"خطأ في الوصول للقناة من الحساب {session_id}: {access_error}")
+            last_error = str(access_error)
+            continue
             
         finally:
-            if client and client.is_connected():
-                try:
-                    await client.disconnect()
-                except Exception:
-                    pass
+            if client:
+                await client.stop()
     
     # التحقق من نجاح التحقق
     if not successful_validation or not entity:
@@ -410,12 +370,12 @@ async def fetch_posts(update: Update, context: ContextTypes.DEFAULT_TYPE, from_c
     last_error = None
     
     # محاولة استخدام حسابات متعددة مع آلية fallback
-    for attempt, session_data in enumerate(accounts):
-        session_str = session_data.get("session")
-        session_id = session_data.get("id", f"حساب-{attempt+1}")
+    for attempt, account in enumerate(accounts):
+        phone = account.get("phone")
+        session_id = account.get("id", f"حساب-{attempt+1}")
         
-        if not session_str:
-            logger.warning(f"تخطي الحساب {session_id}: جلسة فارغة")
+        if not phone:
+            logger.warning(f"تخطي الحساب {session_id}: رقم هاتف فارغ")
             continue
             
         client = None
@@ -429,23 +389,7 @@ async def fetch_posts(update: Update, context: ContextTypes.DEFAULT_TYPE, from_c
                 logger.info(f"استخدام البروكسي {current_proxy['server']} مع الحساب {session_id}")
             
             # إعداد العميل مع البروكسي
-            params = {
-                "api_id": API_ID,
-                "api_hash": API_HASH,
-                "timeout": 30,
-                "device_model": f"PostFetcher-{session_id}",
-                "system_version": "4.0.0",
-                "app_version": "4.0.0"
-            }
-            
-            if current_proxy:
-                from telethon.network import ConnectionTcpMTProxyRandomizedIntermediate
-                params.update({
-                    "connection": ConnectionTcpMTProxyRandomizedIntermediate,
-                    "proxy": (current_proxy["server"], current_proxy["port"], current_proxy["secret"])
-                })
-            
-            client = TelegramClient(StringSession(session_str), **params)
+            client = TDLibClient(API_ID, API_HASH, phone, proxy=current_proxy)
             
             # تحديث رسالة التحميل
             try:
@@ -453,7 +397,7 @@ async def fetch_posts(update: Update, context: ContextTypes.DEFAULT_TYPE, from_c
             except Exception:
                 pass
             
-            await client.connect()
+            await client.start()
             
             if not await client.is_user_authorized():
                 logger.warning(f"الحساب {session_id} غير مفوض")
@@ -510,29 +454,13 @@ async def fetch_posts(update: Update, context: ContextTypes.DEFAULT_TYPE, from_c
             logger.info(f"✅ تم جلب {len(posts)} منشور بنجاح باستخدام الحساب {session_id}")
             break  # نجح الجلب، لا حاجة لمحاولة حسابات أخرى
             
-        except ChannelPrivateError:
-            last_error = f"القناة خاصة أو الحساب {session_id} ليس عضواً فيها"
-            logger.warning(last_error)
-            
-        except PeerIdInvalidError:
-            last_error = f"معرف القناة غير صالح للحساب {session_id}"
-            logger.warning(last_error)
-            
-        except FloodWaitError as e:
-            last_error = f"حد المعدل للحساب {session_id}: انتظار {e.seconds} ثانية"
-            logger.warning(last_error)
-            # لا نتوقف هنا، نجرب الحساب التالي
-            
         except Exception as e:
-            last_error = f"خطأ في الحساب {session_id}: {str(e)}"
-            logger.error(last_error, exc_info=True)
+            last_error = str(e)
+            logger.error(f"خطأ في الحساب {session_id}: {last_error}", exc_info=True)
             
         finally:
-            if client and client.is_connected():
-                try:
-                    await client.disconnect()
-                except Exception:
-                    pass
+            if client:
+                await client.stop()
     
     # التحقق من نجاح العملية
     if not successful_fetch:

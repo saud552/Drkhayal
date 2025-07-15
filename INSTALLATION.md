@@ -306,3 +306,15 @@ enhanced_config.proxy.concurrent_checks = 1
 **🎉 مبروك! النظام المحسن جاهز للاستخدام**
 
 > **نصيحة:** ابدأ دائماً بوضع الاختبار للتأكد من عمل كل شيء بشكل صحيح قبل التبديل للوضع الإنتاجي.
+
+## ⚠️ ملاحظة هامة حول TDLib
+
+هذا المشروع الآن يعتمد على مكتبة [TDLib](https://core.telegram.org/tdlib) عبر [pytdlib](https://github.com/NullpointerW/pytdlib) بدلاً من Telethon.
+
+### تثبيت TDLib (tdjson)
+
+- على Ubuntu/Debian:
+  ```bash
+  sudo apt update && sudo apt install -y libtdjson-dev
+  ```
+- أو راجع [تعليمات pytdlib](https://github.com/NullpointerW/pytdlib#installation) لمزيد من التفاصيل.

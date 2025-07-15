@@ -1,9 +1,6 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import CallbackQueryHandler, MessageHandler, ConversationHandler, CommandHandler, filters, ContextTypes
-from telethon import TelegramClient
-from telethon.sessions import StringSession
-from telethon.network import ConnectionTcpMTProxyRandomizedIntermediate
-from telethon.errors import AuthKeyDuplicatedError
+from Telegram.tdlib_client import TDLibClient
 import os
 import asyncio
 import sqlite3
@@ -54,23 +51,19 @@ def get_accounts(category_id):
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT id, phone, username, session_str, device_info 
+            SELECT id, phone, username, device_info 
             FROM accounts 
             WHERE category_id = ?
         """, (category_id,))
         
         accounts = []
         for row in cursor.fetchall():
-            # فك تشفير الجلسة
-            decrypted_session = decrypt_session(row[3])
-            if decrypted_session:
-                accounts.append({
-                    "id": row[0],
-                    "phone": row[1],
-                    "username": row[2],
-                    "session_str": decrypted_session,
-                    "device_info": row[4]
-                })
+            accounts.append({
+                "id": row[0],
+                "phone": row[1],
+                "username": row[2],
+                "device_info": row[3]
+            })
         conn.close()
         return accounts
     except Exception as e:
@@ -153,7 +146,7 @@ async def select_support_type(update: Update, context: ContextTypes.DEFAULT_TYPE
     invalid_count = 0
 
     for account in all_accounts:
-        client = TelegramClient(StringSession(account['session_str']), API_ID, API_HASH)
+        client = TDLibClient(account['phone'])
         try:
             await client.connect()
             await client.get_me()  # تفعيل الجلسة
@@ -422,7 +415,7 @@ async def do_session_support(session_data, contact, cfg, context):
     API_ID = int(os.getenv('TG_API_ID', '26924046'))
     API_HASH = os.getenv('TG_API_HASH', '4c6ef4cee5e129b7a674de156e2bcc15')
     
-    client = None
+    client = TDLibClient(session_data['phone'])
     connected = False
     proxies = cfg.get("proxies", [])
 
@@ -431,24 +424,12 @@ async def do_session_support(session_data, contact, cfg, context):
         if not context.user_data.get("active", True):
             return
         try:
-            client = TelegramClient(
-                StringSession(session_data['session_str']),
-                API_ID,
-                API_HASH,
-                connection=ConnectionTcpMTProxyRandomizedIntermediate,
-                proxy=(proxy["server"], proxy["port"], proxy["secret"]),
-                auto_reconnect=True,
-                connection_retries=5,
-                retry_delay=5
-            )
             await client.connect()
             if not await client.is_user_authorized():
                 await client.disconnect()
                 return
             connected = True
             break
-        except AuthKeyDuplicatedError:
-            return
         except Exception:
             if client:
                 try: 
@@ -460,11 +441,7 @@ async def do_session_support(session_data, contact, cfg, context):
     # إذا لم تنجح البروكسيات، المحاولة بدونها
     if not connected:
         try:
-            client = TelegramClient(
-                StringSession(session_data['session_str']), 
-                API_ID, 
-                API_HASH
-            )
+            client = TDLibClient(session_data['phone'])
             await client.connect()
             if not await client.is_user_authorized():
                 await client.disconnect()

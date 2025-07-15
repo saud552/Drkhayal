@@ -26,9 +26,7 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
-from telethon import TelegramClient
-from telethon.sessions import StringSession
-from telethon.network import ConnectionTcpMTProxyRandomizedIntermediate
+from Telegram.tdlib_client import TDLibClient
 
 # --- استيراد الإعدادات الأساسية ---
 try:
@@ -66,8 +64,6 @@ from Telegram.common_improved import (
 )
 from config_enhanced import enhanced_config
 
-# تقليل مستوى تسجيل telethon لتجنب الرسائل غير الضرورية
-logging.getLogger('telethon').setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 # --- حالات المحادثة للملف الرئيسي (للإعداد الأولي) ---
@@ -219,7 +215,9 @@ async def process_proxy_links(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(f"⚠️ تم تقليل عدد البروكسيات إلى {MAX_PROXIES} (الحد الأقصى)")
 
     msg = await update.message.reply_text(f"🔍 جاري الفحص المحسن لـ {len(input_links)} بروكسي...")
-    session_str = accounts[0]["session"]
+    # في جميع مواضع session_str أو StringSession، سيتم التعامل مع معرف الهاتف أو مسار الجلسة بدلاً من ذلك
+    # مثال: عند إضافة حساب جديد أو التحقق من الجلسة، استخدم TDLibClient(phone)
+    session_id = accounts[0]["session_id"]
 
     # تحليل الروابط بالنظام المحسن
     parsed_proxies = []
@@ -239,7 +237,7 @@ async def process_proxy_links(update: Update, context: ContextTypes.DEFAULT_TYPE
         await msg.edit_text(f"🔍 بدء الفحص العميق لـ {len(parsed_proxies)} بروكسي...")
         
         # استخدام النظام المحسن للفحص المتوازي
-        valid_proxies = await enhanced_proxy_checker.batch_check_proxies(session_str, parsed_proxies)
+        valid_proxies = await enhanced_proxy_checker.batch_check_proxies(session_id, parsed_proxies)
         
         # تصفية البروكسيات النشطة وترتيبها حسب الجودة
         active_proxies = [p for p in valid_proxies if p.get('status') == 'active']
@@ -268,7 +266,7 @@ async def process_proxy_links(update: Update, context: ContextTypes.DEFAULT_TYPE
             if not proxy_info: 
                 continue
             try:
-                checked_proxy = await proxy_checker.check_proxy(session_str, proxy_info)
+                checked_proxy = await proxy_checker.check_proxy(session_id, proxy_info)
                 if checked_proxy.get("status") == "active":
                     valid_proxies.append(checked_proxy)
             except Exception as fallback_error:
