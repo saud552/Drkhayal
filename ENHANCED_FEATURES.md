@@ -155,13 +155,13 @@ CONCURRENT_PROXY_CHECKS = 3  # فحوصات متزامنة
 
 ```bash
 # تشغيل عادي
-python khayal.py
+python3 khayal.py
 
 # تشغيل في وضع الإنتاج
-ENHANCED_MODE=production python khayal.py
+ENHANCED_MODE=production python3 khayal.py
 
 # تشغيل في وضع الاختبار
-ENHANCED_MODE=testing python khayal.py
+ENHANCED_MODE=testing python3 khayal.py
 ```
 
 ### 2. فحص البروكسيات

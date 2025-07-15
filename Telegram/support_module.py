@@ -9,6 +9,12 @@ import asyncio
 import sqlite3
 import logging
 
+# استيراد DB_PATH من config.py
+try:
+    from config import DB_PATH
+except ImportError:
+    DB_PATH = 'accounts.db'  # قيمة افتراضية
+
 # تعريف حالات ConversationHandler لقسم الدعم الخاص
 SELECT_SUPPORT_TYPE = 300
 ENTER_SUPPORT_MESSAGE = 301
@@ -22,7 +28,7 @@ SUPPORT_PROGRESS = 306
 def get_categories():
     """استيراد الفئات مع عدد الحسابات في كل فئة"""
     try:
-        conn = sqlite3.connect('accounts.db')
+        conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute("""
             SELECT 
@@ -45,7 +51,7 @@ def get_categories():
 def get_accounts(category_id):
     """استيراد الحسابات لفئة محددة مع فك تشفير الجلسات"""
     try:
-        conn = sqlite3.connect('accounts.db')
+        conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute("""
             SELECT id, phone, username, session_str, device_info 

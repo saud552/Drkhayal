@@ -47,18 +47,24 @@ ls -la
 ### الخطوة 3: تثبيت المتطلبات
 
 ```bash
-# تثبيت المكتبات الأساسية
+# تثبيت المكتبات المحسنة (مستحسن)
 pip install -r requirements_enhanced.txt
 
 # أو تثبيت المكتبات الأساسية فقط
+pip install -r requirements.txt
+
+# أو تثبيت يدوياً
 pip install python-telegram-bot telethon cryptography aiohttp
 ```
 
 ### الخطوة 4: إعداد المتغيرات
 
-إنشاء ملف `.env` (اختياري):
+إنشاء ملف `.env`:
 ```bash
-# إنشاء ملف .env
+# نسخ ملف القالب وتحريره
+cp .env.example .env
+
+# أو إنشاء ملف .env يدوياً
 cat > .env << 'EOF'
 TG_API_ID=your_api_id_here
 TG_API_HASH=your_api_hash_here
@@ -197,8 +203,8 @@ pip install --upgrade -r requirements_enhanced.txt
 # على Linux/macOS
 chmod +x khayal.py
 
-# أو تشغيل مع صلاحيات
-sudo python3 khayal.py
+# أو تشغيل مع python مباشرة
+python3 khayal.py
 ```
 
 ### مشكلة: "API errors"

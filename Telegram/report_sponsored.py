@@ -224,7 +224,8 @@ async def confirm_and_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     context.user_data["progress_message"] = msg
     
-            asyncio.create_task(run_enhanced_report_process(update, context))
+    # بدء عملية الإبلاغ المحسنة في الخلفية
+    asyncio.create_task(run_enhanced_report_process(update, context))
     return CONFIRM_START
 
 

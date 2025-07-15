@@ -9,7 +9,7 @@ cryptography==41.0.3
 pyaes==1.6.1
 
 # مكتبات قاعدة البيانات
-sqlite3-utils==3.34
+# sqlite3 متوفر بشكل مدمج مع Python
 sqlalchemy==2.0.19
 
 # مكتبات الشبكات والطلبات
@@ -27,8 +27,8 @@ pytz==2023.3
 
 # مكتبات إضافية للنظام المحسن
 typing-extensions==4.7.1
-dataclasses==0.6
-hashlib3==1.0.1
+# dataclasses متوفر بشكل مدمج مع Python 3.7+
+# hashlib متوفر بشكل مدمج مع Python
 
 # مكتبات اختيارية للتحسينات
 uvloop==0.17.0  # لتحسين asyncio على Linux

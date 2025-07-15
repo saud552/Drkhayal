@@ -13,8 +13,11 @@
 ### ملفات جديدة:
 - **`Telegram/common_improved.py`** - النظام المحسن الأساسي
 - **`config_enhanced.py`** - إعدادات النظام المتقدمة
+- **`requirements_enhanced.txt`** - متطلبات النظام المحسن
+- **`.env.example`** - قالب ملف متغيرات البيئة
 - **`ENHANCED_FEATURES.md`** - توثيق شامل للمميزات
 - **`QUICK_START.md`** - دليل البدء السريع
+- **`INSTALLATION.md`** - دليل التثبيت المفصل
 - **`SUMMARY.md`** - هذا الملخص
 
 ### ملفات محدثة:
