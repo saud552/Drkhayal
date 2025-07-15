@@ -11,6 +11,7 @@ from telegram.ext import (
 
 from .common import run_report_process, cancel_operation, REPORT_TYPES
 from .common_improved import run_enhanced_report_process
+from Telegram.tdlib_client import TDLibClient
 
 # States
 (
