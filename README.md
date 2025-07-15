@@ -13,7 +13,7 @@
 ## متطلبات التشغيل
 
 - Python 3.8 أو أحدث
-- مكتبات Python المطلوبة (انظر requirements.txt)
+- مكتبات Python المطلوبة (انظر requirements.txt أو requirements_enhanced.txt)
 
 ## الإعداد
 
@@ -26,12 +26,16 @@
 
 3. قم بتثبيت المتطلبات:
    ```bash
+   # للنظام الأساسي
    pip install -r requirements.txt
+   
+   # أو للنظام المحسن (مستحسن)
+   pip install -r requirements_enhanced.txt
    ```
 
 4. تشغيل البوت:
    ```bash
-   python khayal.py
+   python3 khayal.py
    ```
 
 ## الأمان
