@@ -6,7 +6,7 @@ import time
 from datetime import datetime, timedelta
 from telethon import TelegramClient
 from telethon.sessions import StringSession
-from telethon.errors.rpcerrorlist import ChannelPrivateError, UsernameNotOccupiedError, FloodWaitError
+from telethon.errors.rpcerrorlist import ChannelPrivateError, UsernameNotOccupiedError, FloodWaitError, PeerIdInvalidError
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ConversationHandler,
@@ -14,6 +14,7 @@ from telegram.ext import (
     filters,
     CallbackQueryHandler,
     ContextTypes,
+    CommandHandler,
 )
 import logging
 
@@ -83,7 +84,7 @@ async def select_reason(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ENTER_CHANNEL
 
 async def process_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة إدخال القناة المستهدفة"""
+    """معالجة إدخال القناة المستهدفة - محسن مع دعم حسابات متعددة"""
     channel_link = update.message.text.strip()
     context.user_data["channel_link"] = channel_link
     
@@ -92,54 +93,166 @@ async def process_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
     # التحقق من وجود حسابات
-    if not context.user_data.get("accounts"):
+    accounts = context.user_data.get("accounts", [])
+    if not accounts:
         await update.message.reply_text("❌ خطأ داخلي: لم يتم تحميل الحسابات. يرجى البدء من جديد.")
         return ConversationHandler.END
-
-    # استخدام أول حساب للتحقق
-    session_data = context.user_data["accounts"][0]
-    client = TelegramClient(StringSession(session_data["session"]), API_ID, API_HASH)
     
-    try:
-        await client.connect()
-        entity = await client.get_entity(channel_link)
-        context.user_data["channel"] = entity.username or entity.id
-        context.user_data["channel_title"] = entity.title
+    # رسالة تحقق مؤقتة
+    checking_msg = await update.message.reply_text("🔍 جاري التحقق من القناة...")
+    
+    # محاولة التحقق من القناة باستخدام حسابات متعددة
+    successful_validation = False
+    entity = None
+    last_error = None
+    proxies = context.user_data.get("proxies", [])
+    
+    for attempt, session_data in enumerate(accounts[:3]):  # نجرب أول 3 حسابات فقط للسرعة
+        session_str = session_data.get("session")
+        session_id = session_data.get("id", f"حساب-{attempt+1}")
         
-        # عرض خيارات جلب المنشورات
-        keyboard = [
-            [InlineKeyboardButton("آخر 50 منشور", callback_data="posts_limit_50")],
-            [InlineKeyboardButton("آخر 100 منشور", callback_data="posts_limit_100")],
-            [InlineKeyboardButton("آخر 200 منشور", callback_data="posts_limit_200")],
-            [InlineKeyboardButton("منشورات محددة (إرسال روابط)", callback_data="posts_custom")],
-            [InlineKeyboardButton("منشورات من فترة محددة", callback_data="posts_date")],
-            [InlineKeyboardButton("منشورات الوسائط فقط", callback_data="posts_media")],
-            [InlineKeyboardButton("🔙 رجوع", callback_data="back_to_channel")],
-        ]
-        await update.message.reply_text(
-            f"✅ تم التحقق من القناة: <b>{entity.title}</b>\n\n"
-            "اختر طريقة تحديد المنشورات للإبلاغ:",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-        return SELECT_POSTS_OPTION
-
-    except (ValueError, UsernameNotOccupiedError):
-        await update.message.reply_text("❌ رابط القناة أو اسم المستخدم غير صالح. يرجى التحقق والمحاولة مرة أخرى.")
-        return ENTER_CHANNEL
-    except ChannelPrivateError:
-        await update.message.reply_text("⚠️ لا يمكن الوصول للقناة. قد تكون خاصة أو أن الحسابات المستخدمة ليست أعضاء فيها.")
-        return ENTER_CHANNEL
-    except FloodWaitError as e:
-        await update.message.reply_text(f"⚠️ لقد تجاوزت حدود تليجرام. يرجى الانتظار {e.seconds} ثانية والمحاولة مرة أخرى.")
-        return ConversationHandler.END
-    except Exception as e:
-        logger.error(f"خطأ غير متوقع في التحقق من القناة: {e}", exc_info=True)
-        await update.message.reply_text(f"❌ حدث خطأ غير متوقع أثناء التحقق من القناة: {e}")
-        return ConversationHandler.END
-    finally:
-        if client.is_connected():
-            await client.disconnect()
+        if not session_str:
+            logger.warning(f"تخطي الحساب {session_id}: جلسة فارغة")
+            continue
+        
+        client = None
+        current_proxy = None
+        
+        try:
+            # اختيار بروكسي عشوائي إن وُجد
+            if proxies:
+                import random
+                current_proxy = random.choice(proxies)
+            
+            # إعداد العميل مع البروكسي
+            params = {
+                "api_id": API_ID,
+                "api_hash": API_HASH,
+                "timeout": 20,
+                "device_model": f"ChannelChecker-{session_id}",
+                "system_version": "4.0.0",
+                "app_version": "4.0.0"
+            }
+            
+            if current_proxy:
+                from telethon.network import ConnectionTcpMTProxyRandomizedIntermediate
+                params.update({
+                    "connection": ConnectionTcpMTProxyRandomizedIntermediate,
+                    "proxy": (current_proxy["server"], current_proxy["port"], current_proxy["secret"])
+                })
+            
+            client = TelegramClient(StringSession(session_str), **params)
+            
+            # تحديث رسالة التحقق
+            try:
+                await checking_msg.edit_text(f"🔍 جاري التحقق من القناة...\n🔄 محاولة مع الحساب {session_id}")
+            except Exception:
+                pass
+            
+            await client.connect()
+            
+            if not await client.is_user_authorized():
+                logger.warning(f"الحساب {session_id} غير مفوض")
+                continue
+            
+            # محاولة جلب معلومات القناة
+            entity = await client.get_entity(channel_link)
+            
+            # تجربة جلب منشور واحد للتأكد من إمكانية الوصول
+            try:
+                async for message in client.iter_messages(entity, limit=1):
+                    break  # إذا تمكن من جلب رسالة واحدة، فالوصول متاح
+            except ChannelPrivateError:
+                logger.warning(f"الحساب {session_id} لا يستطيع الوصول للقناة الخاصة")
+                continue
+            except Exception as access_error:
+                logger.warning(f"خطأ في الوصول للقناة من الحساب {session_id}: {access_error}")
+                continue
+            
+            successful_validation = True
+            logger.info(f"✅ تم التحقق من القناة بنجاح باستخدام الحساب {session_id}")
+            break
+            
+        except (ValueError, UsernameNotOccupiedError):
+            last_error = "رابط القناة أو اسم المستخدم غير صالح"
+            logger.warning(f"رابط غير صالح مع الحساب {session_id}")
+            # لا نكمل مع باقي الحسابات إذا كان الرابط غير صالح
+            break
+            
+        except ChannelPrivateError:
+            last_error = f"القناة خاصة أو الحساب {session_id} ليس عضواً فيها"
+            logger.warning(last_error)
+            
+        except FloodWaitError as e:
+            last_error = f"حد المعدل للحساب {session_id}: انتظار {e.seconds} ثانية"
+            logger.warning(last_error)
+            
+        except Exception as e:
+            last_error = f"خطأ في الحساب {session_id}: {str(e)}"
+            logger.error(last_error, exc_info=True)
+            
+        finally:
+            if client and client.is_connected():
+                try:
+                    await client.disconnect()
+                except Exception:
+                    pass
+    
+    # التحقق من نجاح التحقق
+    if not successful_validation or not entity:
+        if "رابط القناة أو اسم المستخدم غير صالح" in str(last_error):
+            await checking_msg.edit_text("❌ رابط القناة أو اسم المستخدم غير صالح. يرجى التحقق والمحاولة مرة أخرى.")
+            return ENTER_CHANNEL
+        elif last_error and "خاصة" in last_error:
+            error_msg = (
+                "⚠️ لا يمكن الوصول للقناة من أي من الحسابات المتاحة.\n\n"
+                "💡 تأكد من:\n"
+                "• أن الحسابات أعضاء في القناة\n"
+                "• أن القناة ليست محظورة\n"
+                "• أن رابط القناة صحيح"
+            )
+            await checking_msg.edit_text(error_msg)
+            return ENTER_CHANNEL
+        else:
+            error_msg = f"❌ فشل في التحقق من القناة من جميع الحسابات المتاحة"
+            if last_error:
+                error_msg += f"\n\nآخر خطأ: {last_error}"
+            await checking_msg.edit_text(error_msg)
+            return ConversationHandler.END
+    
+    # حفظ معلومات القناة
+    context.user_data["channel"] = entity.username or entity.id
+    context.user_data["channel_title"] = entity.title
+    
+    # عرض خيارات جلب المنشورات
+    keyboard = [
+        [InlineKeyboardButton("آخر 50 منشور", callback_data="posts_limit_50")],
+        [InlineKeyboardButton("آخر 100 منشور", callback_data="posts_limit_100")],
+        [InlineKeyboardButton("آخر 200 منشور", callback_data="posts_limit_200")],
+        [InlineKeyboardButton("منشورات محددة (إرسال روابط)", callback_data="posts_custom")],
+        [InlineKeyboardButton("منشورات من فترة محددة", callback_data="posts_date")],
+        [InlineKeyboardButton("منشورات الوسائط فقط", callback_data="posts_media")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data="back_to_channel")],
+    ]
+    
+    success_msg = (
+        f"✅ تم التحقق من القناة: <b>{entity.title}</b>\n\n"
+        "اختر طريقة تحديد المنشورات للإبلاغ:"
+    )
+    
+    # إضافة معلومات إضافية عن القناة
+    try:
+        if hasattr(entity, 'participants_count') and entity.participants_count:
+            success_msg += f"\n👥 عدد الأعضاء: {entity.participants_count:,}"
+    except:
+        pass
+    
+    await checking_msg.edit_text(
+        success_msg,
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    return SELECT_POSTS_OPTION
 
 async def select_posts_option(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """معالجة اختيار خيار المنشورات"""
@@ -263,7 +376,7 @@ async def process_posts_number(update: Update, context: ContextTypes.DEFAULT_TYP
     return ENTER_DETAILS
 
 async def fetch_posts(update: Update, context: ContextTypes.DEFAULT_TYPE, from_callback=False, from_message=False):
-    """جلب المنشورات من القناة حسب الخيار المحدد"""
+    """جلب المنشورات من القناة حسب الخيار المحدد - محسن مع دعم حسابات متعددة"""
     fetch_type = context.user_data['fetch_type']
     
     loading_text = ""
@@ -281,71 +394,184 @@ async def fetch_posts(update: Update, context: ContextTypes.DEFAULT_TYPE, from_c
         msg = await update.message.reply_text(loading_text)
     elif from_callback:
         msg = await update.callback_query.message.edit_text(loading_text)
-    else: # Fallback, should ideally not happen if called correctly
+    else:
         msg = await context.bot.send_message(chat_id=update.effective_chat.id, text=loading_text)
 
-
     channel_entity_id = context.user_data["channel"]
-    session_str = context.user_data["accounts"][0]["session"]
+    accounts = context.user_data.get("accounts", [])
+    proxies = context.user_data.get("proxies", [])
     
-    client = TelegramClient(StringSession(session_str), API_ID, API_HASH)
+    if not accounts:
+        await msg.edit_text("❌ لا توجد حسابات صالحة لجلب المنشورات.")
+        return ConversationHandler.END
+    
     posts = []
+    successful_fetch = False
+    last_error = None
     
-    try:
-        await client.connect()
+    # محاولة استخدام حسابات متعددة مع آلية fallback
+    for attempt, session_data in enumerate(accounts):
+        session_str = session_data.get("session")
+        session_id = session_data.get("id", f"حساب-{attempt+1}")
         
-        if fetch_type == 'recent':
-            limit = context.user_data['fetch_limit']
-            async for message in client.iter_messages(channel_entity_id, limit=limit):
-                posts.append({"channel": channel_entity_id, "message_id": message.id})
-                
-        elif fetch_type == 'media':
-            limit = context.user_data['fetch_limit']
-            media_posts_count = 0
-            # Iterate through messages and collect only those with media
-            # We'll fetch more than 'limit' to ensure we get enough media posts
-            async for message in client.iter_messages(channel_entity_id, limit=None): # Iterate indefinitely
-                if message.media:
-                    posts.append({"channel": channel_entity_id, "message_id": message.id})
-                    media_posts_count += 1
-                if media_posts_count >= limit:
-                    break
+        if not session_str:
+            logger.warning(f"تخطي الحساب {session_id}: جلسة فارغة")
+            continue
             
-        elif fetch_type == 'date':
-            days = context.user_data['days']
-            offset_date = datetime.now() - timedelta(days=days)
-            # Fetch messages until we go past the offset_date
-            async for message in client.iter_messages(channel_entity_id, offset_date=offset_date):
-                # iter_messages with offset_date gives messages *older* than the date
-                # We want messages *newer* than the date.
-                # So we iterate and add if message.date is after offset_date
-                if message.date > offset_date:
-                    posts.append({"channel": channel_entity_id, "message_id": message.id})
-                else:
-                    # Once we hit a message older than or equal to the offset_date, stop
-                    # as messages are returned in reverse chronological order.
-                    break
-
-    except FloodWaitError as e:
-        logger.error(f"FloodWaitError during fetching posts: {e}", exc_info=True)
-        await msg.edit_text(f"⚠️ لقد تجاوزت حدود تليجرام أثناء جلب المنشورات. يرجى الانتظار {e.seconds} ثانية والمحاولة مرة أخرى.")
+        client = None
+        current_proxy = None
+        
+        try:
+            # اختيار بروكسي عشوائي إن وُجد
+            if proxies:
+                import random
+                current_proxy = random.choice(proxies)
+                logger.info(f"استخدام البروكسي {current_proxy['server']} مع الحساب {session_id}")
+            
+            # إعداد العميل مع البروكسي
+            params = {
+                "api_id": API_ID,
+                "api_hash": API_HASH,
+                "timeout": 30,
+                "device_model": f"PostFetcher-{session_id}",
+                "system_version": "4.0.0",
+                "app_version": "4.0.0"
+            }
+            
+            if current_proxy:
+                from telethon.network import ConnectionTcpMTProxyRandomizedIntermediate
+                params.update({
+                    "connection": ConnectionTcpMTProxyRandomizedIntermediate,
+                    "proxy": (current_proxy["server"], current_proxy["port"], current_proxy["secret"])
+                })
+            
+            client = TelegramClient(StringSession(session_str), **params)
+            
+            # تحديث رسالة التحميل
+            try:
+                await msg.edit_text(f"{loading_text}\n🔄 محاولة مع الحساب {session_id}...")
+            except Exception:
+                pass
+            
+            await client.connect()
+            
+            if not await client.is_user_authorized():
+                logger.warning(f"الحساب {session_id} غير مفوض")
+                continue
+            
+            # جلب المنشورات حسب النوع المحدد
+            if fetch_type == 'recent':
+                limit = context.user_data['fetch_limit']
+                logger.info(f"جلب آخر {limit} منشور من {channel_entity_id}")
+                
+                async for message in client.iter_messages(channel_entity_id, limit=limit):
+                    if message.id:  # تأكد من وجود معرف الرسالة
+                        posts.append({"channel": channel_entity_id, "message_id": message.id})
+                
+            elif fetch_type == 'media':
+                limit = context.user_data['fetch_limit']
+                media_posts_count = 0
+                logger.info(f"جلب آخر {limit} منشور يحتوي على وسائط من {channel_entity_id}")
+                
+                # البحث عن منشورات تحتوي على وسائط
+                async for message in client.iter_messages(channel_entity_id, limit=limit * 3):  # جلب أكثر للعثور على الوسائط
+                    if message.media and message.id:
+                        posts.append({"channel": channel_entity_id, "message_id": message.id})
+                        media_posts_count += 1
+                        if media_posts_count >= limit:
+                            break
+                
+            elif fetch_type == 'date':
+                days = context.user_data['days']
+                from datetime import datetime, timedelta
+                
+                # حساب التاريخ المطلوب (منذ X أيام)
+                target_date = datetime.now() - timedelta(days=days)
+                logger.info(f"جلب المنشورات من {target_date.strftime('%Y-%m-%d')} حتى الآن")
+                
+                # جلب المنشورات من التاريخ المحدد
+                message_count = 0
+                async for message in client.iter_messages(channel_entity_id, limit=None):
+                    if message.date and message.id:
+                        # إذا كانت الرسالة أحدث من التاريخ المحدد
+                        if message.date >= target_date:
+                            posts.append({"channel": channel_entity_id, "message_id": message.id})
+                            message_count += 1
+                        else:
+                            # وصلنا لتاريخ أقدم من المطلوب، توقف
+                            break
+                    
+                    # حد أقصى للأمان (تجنب الحلقة اللانهائية)
+                    if message_count >= 1000:
+                        logger.warning("تم الوصول للحد الأقصى من المنشورات (1000)")
+                        break
+            
+            successful_fetch = True
+            logger.info(f"✅ تم جلب {len(posts)} منشور بنجاح باستخدام الحساب {session_id}")
+            break  # نجح الجلب، لا حاجة لمحاولة حسابات أخرى
+            
+        except ChannelPrivateError:
+            last_error = f"القناة خاصة أو الحساب {session_id} ليس عضواً فيها"
+            logger.warning(last_error)
+            
+        except PeerIdInvalidError:
+            last_error = f"معرف القناة غير صالح للحساب {session_id}"
+            logger.warning(last_error)
+            
+        except FloodWaitError as e:
+            last_error = f"حد المعدل للحساب {session_id}: انتظار {e.seconds} ثانية"
+            logger.warning(last_error)
+            # لا نتوقف هنا، نجرب الحساب التالي
+            
+        except Exception as e:
+            last_error = f"خطأ في الحساب {session_id}: {str(e)}"
+            logger.error(last_error, exc_info=True)
+            
+        finally:
+            if client and client.is_connected():
+                try:
+                    await client.disconnect()
+                except Exception:
+                    pass
+    
+    # التحقق من نجاح العملية
+    if not successful_fetch:
+        error_msg = f"❌ فشل في جلب المنشورات من جميع الحسابات المتاحة"
+        if last_error:
+            error_msg += f"\n\nآخر خطأ: {last_error}"
+        
+        error_msg += f"\n\n💡 تأكد من:\n• أن الحسابات أعضاء في القناة\n• أن رابط القناة صحيح\n• أن القناة ليست محظورة"
+        
+        await msg.edit_text(error_msg)
         return ConversationHandler.END
-    except Exception as e:
-        logger.error(f"فشل جلب المنشورات: {e}", exc_info=True)
-        await msg.edit_text(f"❌ فشل جلب المنشورات: {e}")
-        return ConversationHandler.END
-    finally:
-        if client.is_connected():
-            await client.disconnect()
 
     if not posts:
         await msg.edit_text("❌ لم يتم العثور على أي منشورات تطابق المعايير في هذه القناة.")
         return ConversationHandler.END
-        
-    context.user_data["targets"] = posts
-    await msg.edit_text(
-        f"✅ تم جلب {len(posts)} منشور بنجاح.\n\nالآن، أرسل رسالة تفصيلية للبلاغ (أو أرسل /skip للتخطي):"
-    )
+    
+    # إزالة المنشورات المكررة (في حالة وجودها)
+    unique_posts = []
+    seen_ids = set()
+    for post in posts:
+        if post["message_id"] not in seen_ids:
+            unique_posts.append(post)
+            seen_ids.add(post["message_id"])
+    
+    context.user_data["targets"] = unique_posts
+    
+    # رسالة النجاح مع تفاصيل
+    success_msg = f"✅ تم جلب {len(unique_posts)} منشور بنجاح"
+    
+    if fetch_type == 'recent':
+        success_msg += f" (آخر {context.user_data['fetch_limit']} منشور)"
+    elif fetch_type == 'media':
+        success_msg += f" (منشورات تحتوي على وسائط)"
+    elif fetch_type == 'date':
+        success_msg += f" (من آخر {context.user_data['days']} يوم)"
+    
+    success_msg += "\n\nالآن، أرسل رسالة تفصيلية للبلاغ (أو أرسل /skip للتخطي):"
+    
+    await msg.edit_text(success_msg)
     return ENTER_DETAILS
 
 async def process_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -599,6 +825,10 @@ mass_report_conv = ConversationHandler(
             CallbackQueryHandler(cancel_operation, pattern='^cancel$'),
         ],
     },
-    fallbacks=[CallbackQueryHandler(cancel_operation, pattern='^cancel$')],
+    fallbacks=[
+        CallbackQueryHandler(cancel_operation, pattern='^cancel$'),
+        CommandHandler('cancel', cancel_operation),
+        MessageHandler(filters.Regex(r'^/cancel$'), cancel_operation),
+    ],
     per_user=True,
 )

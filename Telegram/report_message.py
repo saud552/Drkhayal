@@ -7,6 +7,7 @@ from telegram.ext import (
     filters,
     CallbackQueryHandler,
     ContextTypes,
+    CommandHandler,
 )
 
 from .common import run_report_process, cancel_operation, REPORT_TYPES, parse_message_link
@@ -276,6 +277,10 @@ message_report_conv = ConversationHandler(
             CallbackQueryHandler(cancel_operation, pattern='^cancel$'),
         ],
     },
-    fallbacks=[CallbackQueryHandler(cancel_operation, pattern='^cancel$')],
+    fallbacks=[
+        CallbackQueryHandler(cancel_operation, pattern='^cancel$'),
+        CommandHandler('cancel', cancel_operation),
+        MessageHandler(filters.Regex(r'^/cancel$'), cancel_operation),
+    ],
     per_user=True,
 )

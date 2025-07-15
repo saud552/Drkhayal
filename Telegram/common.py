@@ -943,36 +943,61 @@ async def process_single_account(session, targets, reports_per_account, config, 
             config["progress_failed"] += remaining
 
 async def cancel_operation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """تلغي العملية الحالية وتنهي المحادثة."""
-    query = update.callback_query
+    """تلغي العملية الحالية وتنهي المحادثة - محسنة للنظام الجديد."""
+    query = update.callback_query if update.callback_query else None
     user_data = context.user_data
     
-    # إعلام المستخدم بالإلغاء
-    if query and query.message:
-        try:
-            await query.message.edit_text("🛑 جاري إيقاف العملية...")
-        except BadRequest:
-            # في حالة عدم وجود رسالة أو مشكلة في التعديل
+    # إعلام المستخدم بالإلغاء فوراً
+    cancel_msg = None
+    try:
+        if query and query.message:
             try:
-                await context.bot.send_message(
+                cancel_msg = await query.message.edit_text("🛑 جاري إيقاف العملية...")
+                await query.answer("🛑 جاري الإلغاء...")
+            except BadRequest:
+                # في حالة عدم إمكانية تعديل الرسالة
+                cancel_msg = await context.bot.send_message(
                     chat_id=update.effective_chat.id,
                     text="🛑 جاري إيقاف العملية..."
                 )
-            except Exception:
-                pass
+        else:
+            # إذا كان الأمر من رسالة نصية /cancel
+            cancel_msg = await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="🛑 جاري إيقاف العملية..."
+            )
+    except Exception as e:
+        logger.error(f"خطأ في إرسال رسالة بداية الإلغاء: {e}")
     
-    # وضع علامة الإلغاء
+    # وضع علامة الإلغاء أولاً لإيقاف العمليات الجارية
     user_data["active"] = False
     
-    # إلغاء المهام الجارية
+    # إلغاء المهام الجارية مع تتبع مفصل
+    cancelled_tasks = 0
+    total_tasks = 0
+    
+    # إلغاء مهام النظام الجديد (المتزامن)
     tasks = user_data.get("tasks", [])
-    for task in tasks:
-        if not task.done():
+    if tasks:
+        total_tasks = len(tasks)
+        logger.info(f"🛑 محاولة إلغاء {total_tasks} مهمة...")
+        
+        for i, task in enumerate(tasks):
+            if not task.done():
+                try:
+                    task.cancel()
+                    cancelled_tasks += 1
+                    logger.debug(f"✅ تم إلغاء المهمة {i+1}/{total_tasks}")
+                except Exception as e:
+                    logger.error(f"❌ خطأ في إلغاء المهمة {i+1}: {e}")
+        
+        # انتظار قصير للسماح للمهام بالإلغاء
+        if cancelled_tasks > 0:
             try:
-                task.cancel()
-                await asyncio.sleep(0.1)  # إعطاء وقت للإلغاء
+                await asyncio.sleep(0.5)  # انتظار أطول قليلاً للنظام الجديد
+                logger.info(f"✅ تم إلغاء {cancelled_tasks}/{total_tasks} مهمة")
             except Exception as e:
-                logger.error(f"خطأ أثناء إلغاء المهمة: {e}")
+                logger.error(f"خطأ أثناء انتظار إلغاء المهام: {e}")
     
     # إلغاء مهمة مراقبة البروكسي إن وجدت
     monitor_task = user_data.get("monitor_task")
@@ -980,26 +1005,76 @@ async def cancel_operation(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         try:
             monitor_task.cancel()
             await asyncio.sleep(0.1)
+            logger.info("✅ تم إلغاء مهمة مراقبة البروكسي")
         except Exception as e:
             logger.error(f"خطأ أثناء إلغاء مراقبة البروكسي: {e}")
+    
+    # إلغاء مهام النظام المحسن إن وجدت
+    progress_message = user_data.get("progress_message")
+    if progress_message:
+        try:
+            await progress_message.edit_text(
+                "🛑 <b>تم إيقاف العملية</b>\n\n"
+                "جاري إنهاء المهام المعلقة...",
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            logger.error(f"خطأ في تحديث رسالة التقدم: {e}")
     
     # تنظيف بيانات المستخدم
     keys_to_remove = [
         "tasks", "active", "lock", "failed_reports",
         "progress_message", "monitor_task", "accounts",
-        "targets", "reason_obj", "method_type"
+        "targets", "reason_obj", "method_type", "channel",
+        "channel_title", "fetch_type", "fetch_limit", "days",
+        "message", "reports_per_account", "cycle_delay",
+        "proxies", "total_reports", "total_cycles", "current_cycle",
+        "progress_success", "progress_confirmed", "progress_failed",
+        "start_time", "detailed_stats"
     ]
+    
+    removed_keys = 0
     for key in keys_to_remove:
         if key in user_data:
             del user_data[key]
+            removed_keys += 1
     
-    # إرسال رسالة الإلغاء النهائية
+    logger.info(f"🗑️ تم تنظيف {removed_keys} عنصر من بيانات المستخدم")
+    
+    # إرسال رسالة الإلغاء النهائية مع إحصائيات
+    final_message = (
+        "🛑 <b>تم إلغاء العملية بنجاح</b>\n\n"
+        f"📊 <b>إحصائيات الإلغاء:</b>\n"
+    )
+    
+    if total_tasks > 0:
+        final_message += f"• المهام الملغاة: {cancelled_tasks}/{total_tasks}\n"
+    
+    final_message += (
+        f"• البيانات المنظفة: {removed_keys} عنصر\n\n"
+        "💡 يمكنك البدء من جديد باستخدام /start"
+    )
+    
     try:
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text="🛑 تم إلغاء العملية بنجاح."
-        )
+        if cancel_msg:
+            await cancel_msg.edit_text(final_message, parse_mode="HTML")
+        else:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=final_message,
+                parse_mode="HTML"
+            )
     except Exception as e:
-        logger.error(f"خطأ في إرسال رسالة الإلغاء: {e}")
+        # محاولة أخيرة بدون HTML formatting
+        try:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="🛑 تم إلغاء العملية بنجاح.\n\nيمكنك البدء من جديد باستخدام /start"
+            )
+        except Exception as e2:
+            logger.error(f"خطأ في إرسال رسالة الإلغاء النهائية: {e}, {e2}")
+    
+    # تسجيل الإلغاء في السجل
+    logger.info(f"🛑 تم إلغاء العملية للمستخدم {update.effective_user.id} - مهام ملغاة: {cancelled_tasks}, بيانات منظفة: {removed_keys}")
     
     return ConversationHandler.END

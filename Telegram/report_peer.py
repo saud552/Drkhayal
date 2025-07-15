@@ -6,6 +6,7 @@ from telegram.ext import (
     filters,
     CallbackQueryHandler,
     ContextTypes,
+    CommandHandler,
 )
 
 from .common import run_report_process, cancel_operation, REPORT_TYPES
@@ -237,6 +238,7 @@ async def confirm_and_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
+# معالج المحادثة
 peer_report_conv = ConversationHandler(
     entry_points=[CallbackQueryHandler(start_peer_report, pattern='^method_peer$')],
     states={
@@ -256,6 +258,10 @@ peer_report_conv = ConversationHandler(
             CallbackQueryHandler(cancel_operation, pattern='^cancel$'),
         ],
     },
-    fallbacks=[CallbackQueryHandler(cancel_operation, pattern='^cancel$')],
+    fallbacks=[
+        CallbackQueryHandler(cancel_operation, pattern='^cancel$'),
+        CommandHandler('cancel', cancel_operation),
+        MessageHandler(filters.Regex(r'^/cancel$'), cancel_operation),
+    ],
     per_user=True,
 )
