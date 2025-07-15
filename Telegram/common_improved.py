@@ -742,7 +742,7 @@ def parse_proxy_link_enhanced(link: str) -> dict | None:
 enhanced_proxy_checker = EnhancedProxyChecker()
 
 async def run_enhanced_report_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """عملية إبلاغ محسنة مع تتبع مفصل وتأكيد الإرسال"""
+    """عملية إبلاغ محسنة مع تتبع مفصل وتأكيد الإرسال - مع الإبلاغ المتزامن"""
     config = context.user_data
     sessions = config.get("accounts", [])
     
@@ -756,11 +756,15 @@ async def run_enhanced_report_process(update: Update, context: ContextTypes.DEFA
     targets = config.get("targets", [])
     reports_per_account = config.get("reports_per_account", 1)
     proxies = config.get("proxies", [])
+    cycle_delay = config.get("cycle_delay", 1)
     
-    # إحصائيات مفصلة
-    total_expected = len(sessions) * len(targets) * reports_per_account
+    # إحصائيات مفصلة - تحديث حساب المجموع
+    total_cycles = reports_per_account  # عدد الدورات = عدد البلاغات المطلوبة
+    total_expected = len(sessions) * len(targets) * total_cycles
     config.update({
         "total_reports": total_expected,
+        "total_cycles": total_cycles,
+        "current_cycle": 0,
         "progress_success": 0,
         "progress_confirmed": 0,
         "progress_failed": 0,
@@ -770,7 +774,8 @@ async def run_enhanced_report_process(update: Update, context: ContextTypes.DEFA
         "detailed_stats": {
             "verified_reports": [],
             "failed_sessions": [],
-            "proxy_performance": {}
+            "proxy_performance": {},
+            "cycle_stats": []
         }
     })
     
@@ -809,27 +814,17 @@ async def run_enhanced_report_process(update: Update, context: ContextTypes.DEFA
             
             await asyncio.sleep(2)
     
-    # بدء عملية الإبلاغ المحسنة
+    # بدء عملية الإبلاغ المحسنة المتزامنة
     try:
         progress_message = await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text="🚀 بدء عملية الإبلاغ المحققة...",
+            text="🚀 بدء عملية الإبلاغ الجماعي المتزامن...",
             parse_mode="HTML"
         )
         context.user_data["progress_message"] = progress_message
         
-        # إنشاء مهام للحسابات
-        session_tasks = []
-        for session in sessions:
-            task = asyncio.create_task(
-                process_enhanced_session(session, targets, reports_per_account, config, context)
-            )
-            session_tasks.append(task)
-        
-        context.user_data["tasks"] = session_tasks
-        
-        # مراقبة التقدم المحسنة
-        await monitor_enhanced_progress(context, progress_message, session_tasks)
+        # تنفيذ دورات الإبلاغ المتزامن
+        await execute_simultaneous_mass_reporting(sessions, targets, config, context, progress_message)
         
     except Exception as e:
         logger.error(f"خطأ في عملية الإبلاغ المحسنة: {e}")
@@ -838,9 +833,265 @@ async def run_enhanced_report_process(update: Update, context: ContextTypes.DEFA
             text=f"❌ خطأ في العملية: {str(e)}"
         )
 
+async def execute_simultaneous_mass_reporting(sessions: list, targets: list, config: dict, 
+                                            context: ContextTypes.DEFAULT_TYPE, progress_message: Any):
+    """تنفيذ الإبلاغ الجماعي المتزامن - جميع المنشورات من جميع الحسابات في نفس الوقت"""
+    total_cycles = config["total_cycles"]
+    cycle_delay = config.get("cycle_delay", 1)
+    
+    detailed_logger.info(f"🚀 بدء {total_cycles} دورة إبلاغ جماعي متزامن")
+    
+    for cycle in range(total_cycles):
+        if not config.get("active", True):
+            break
+            
+        config["current_cycle"] = cycle + 1
+        cycle_start_time = time.time()
+        
+        detailed_logger.info(f"📊 بدء الدورة {cycle + 1}/{total_cycles}")
+        
+        # تحديث رسالة التقدم لعرض معلومات الدورة
+        await update_cycle_progress(config, progress_message, cycle + 1, "بدء الدورة...")
+        
+        # إنشاء جميع مهام الإبلاغ للدورة الحالية (جميع الحسابات × جميع المنشورات)
+        cycle_tasks = []
+        
+        for session in sessions:
+            for target in targets:
+                if not config.get("active", True):
+                    break
+                    
+                # إنشاء مهمة إبلاغ واحدة لكل (حساب، منشور)
+                task = asyncio.create_task(
+                    execute_single_report_task(session, target, config, context)
+                )
+                cycle_tasks.append(task)
+        
+        if not cycle_tasks:
+            break
+            
+        detailed_logger.info(f"⚡ تنفيذ {len(cycle_tasks)} مهمة إبلاغ متزامنة في الدورة {cycle + 1}")
+        
+        # تحديث رسالة التقدم
+        await update_cycle_progress(config, progress_message, cycle + 1, f"تنفيذ {len(cycle_tasks)} إبلاغ متزامن...")
+        
+        # تنفيذ جميع المهام بشكل متزامن
+        cycle_results = await asyncio.gather(*cycle_tasks, return_exceptions=True)
+        
+        # تحليل نتائج الدورة
+        cycle_success = 0
+        cycle_failed = 0
+        
+        for result in cycle_results:
+            if isinstance(result, Exception):
+                cycle_failed += 1
+                detailed_logger.error(f"❌ مهمة فاشلة في الدورة {cycle + 1}: {result}")
+            elif isinstance(result, dict) and result.get("success"):
+                cycle_success += result.get("verified_reports", 0)
+            else:
+                cycle_failed += 1
+        
+        # تحديث الإحصائيات
+        async with config["lock"]:
+            config["progress_success"] += cycle_success
+            config["progress_confirmed"] += cycle_success
+            config["progress_failed"] += cycle_failed
+            
+            # إضافة إحصائيات الدورة
+            cycle_stats = {
+                "cycle": cycle + 1,
+                "success": cycle_success,
+                "failed": cycle_failed,
+                "duration": time.time() - cycle_start_time,
+                "timestamp": time.time()
+            }
+            config["detailed_stats"]["cycle_stats"].append(cycle_stats)
+        
+        cycle_duration = time.time() - cycle_start_time
+        detailed_logger.info(f"✅ اكتملت الدورة {cycle + 1}/{total_cycles} - نجح: {cycle_success}, فشل: {cycle_failed}, المدة: {cycle_duration:.1f}ث")
+        
+        # تحديث رسالة التقدم بنتائج الدورة
+        await update_cycle_progress(config, progress_message, cycle + 1, 
+                                  f"نجح: {cycle_success}, فشل: {cycle_failed}")
+        
+        # انتظار قبل الدورة التالية (إلا إذا كانت آخر دورة)
+        if cycle < total_cycles - 1 and config.get("active", True):
+            detailed_logger.info(f"⏳ انتظار {cycle_delay} ثانية قبل الدورة التالية...")
+            await update_cycle_progress(config, progress_message, cycle + 1, 
+                                      f"انتظار {cycle_delay}ث قبل الدورة التالية...")
+            await asyncio.sleep(cycle_delay)
+    
+    # عرض النتائج النهائية
+    await display_final_mass_report_results(config, progress_message)
+
+async def execute_single_report_task(session: dict, target: any, config: dict, 
+                                   context: ContextTypes.DEFAULT_TYPE) -> dict:
+    """تنفيذ مهمة إبلاغ واحدة (حساب واحد، منشور واحد)"""
+    session_id = session.get("id", "unknown")
+    session_str = session.get("session")
+    proxies = config.get("proxies", [])
+    
+    if not session_str:
+        return {"success": False, "error": f"جلسة فارغة للحساب {session_id}"}
+    
+    client = None
+    current_proxy = None
+    
+    try:
+        # اختيار بروكسي عشوائي
+        if proxies:
+            current_proxy = random.choice(proxies)
+        
+        # إعداد العميل
+        params = {
+            "api_id": API_ID,
+            "api_hash": API_HASH,
+            "timeout": 30,
+            "device_model": f"MassReporter-{session_id}",
+            "system_version": "3.0.0",
+            "app_version": "3.0.0"
+        }
+        
+        if current_proxy:
+            params.update({
+                "connection": ConnectionTcpMTProxyRandomizedIntermediate,
+                "proxy": (current_proxy["server"], current_proxy["port"], current_proxy["secret"])
+            })
+        
+        # الاتصال
+        client = TelegramClient(StringSession(session_str), **params)
+        await client.connect()
+        
+        if not await client.is_user_authorized():
+            return {"success": False, "error": f"الجلسة {session_id} غير مفوضة"}
+        
+        # إنشاء مبلغ محقق
+        reporter = VerifiedReporter(client, context)
+        
+        # تنفيذ بلاغ واحد فقط لهذا الهدف
+        result = await reporter.execute_verified_report(
+            target=target,
+            reason_obj=config["reason_obj"],
+            method_type=config["method_type"],
+            message=config.get("message", ""),
+            reports_count=1,  # بلاغ واحد فقط في كل مهمة
+            cycle_delay=0     # لا حاجة للتأخير داخل المهمة الواحدة
+        )
+        
+        return result
+        
+    except Exception as e:
+        detailed_logger.error(f"❌ فشل مهمة الحساب {session_id} للهدف {target}: {e}")
+        return {"success": False, "error": str(e)}
+    
+    finally:
+        if client and client.is_connected():
+            await client.disconnect()
+
+async def update_cycle_progress(config: dict, progress_message: Any, current_cycle: int, status: str):
+    """تحديث رسالة التقدم مع معلومات الدورة"""
+    try:
+        async with config["lock"]:
+            success = config["progress_success"]
+            failed = config["progress_failed"]
+            total = config["total_reports"]
+            total_cycles = config["total_cycles"]
+            
+        completed = success + failed
+        progress_percent = min(100, int((completed / total) * 100))
+        
+        elapsed = time.time() - config["start_time"]
+        
+        # شريط التقدم
+        filled = int(20 * (progress_percent / 100))
+        progress_bar = "█" * filled + "░" * (20 - filled)
+        
+        # حساب التوقيت المتبقي بناءً على الدورات
+        if current_cycle > 1:
+            avg_cycle_time = elapsed / (current_cycle - 1)
+            remaining_cycles = total_cycles - current_cycle + 1
+            eta_seconds = avg_cycle_time * remaining_cycles
+            eta_str = str(timedelta(seconds=int(eta_seconds)))
+        else:
+            eta_str = "حساب..."
+        
+        text = (
+            f"🎯 <b>الإبلاغ الجماعي المتزامن</b>\n\n"
+            f"<code>[{progress_bar}]</code> {progress_percent}%\n\n"
+            f"📊 <b>الدورة {current_cycle}/{total_cycles}</b>\n"
+            f"📈 <b>الإحصائيات:</b>\n"
+            f"▫️ المطلوب: {total}\n"
+            f"✅ نجح: {success}\n"
+            f"❌ فشل: {failed}\n"
+            f"⏱ المتبقي: {eta_str}\n"
+            f"⏰ المدة: {str(timedelta(seconds=int(elapsed)))}\n\n"
+            f"🔄 <b>الحالة:</b> {status}"
+        )
+        
+        await progress_message.edit_text(text, parse_mode="HTML")
+        
+    except BadRequest:
+        pass
+    except Exception as e:
+        logger.warning(f"خطأ في تحديث رسالة التقدم: {e}")
+
+async def display_final_mass_report_results(config: dict, progress_message: Any):
+    """عرض النتائج النهائية للإبلاغ الجماعي"""
+    async with config["lock"]:
+        final_stats = {
+            "success": config["progress_success"],
+            "confirmed": config["progress_confirmed"],
+            "failed": config["progress_failed"],
+            "total_cycles": config["total_cycles"],
+            "total_time": time.time() - config["start_time"],
+            "cycle_stats": config["detailed_stats"]["cycle_stats"]
+        }
+    
+    # حساب معدلات النجاح لكل دورة
+    cycle_summary = ""
+    if final_stats["cycle_stats"]:
+        cycle_summary = "\n\n📊 <b>ملخص الدورات:</b>\n"
+        for cycle_stat in final_stats["cycle_stats"]:
+            cycle_num = cycle_stat["cycle"]
+            cycle_success = cycle_stat["success"]
+            cycle_failed = cycle_stat["failed"]
+            cycle_duration = cycle_stat["duration"]
+            cycle_summary += f"▫️ الدورة {cycle_num}: ✅{cycle_success} ❌{cycle_failed} ({cycle_duration:.1f}ث)\n"
+    
+    avg_cycle_time = final_stats["total_time"] / final_stats["total_cycles"] if final_stats["total_cycles"] > 0 else 0
+    total_success_rate = (final_stats["success"] / (final_stats["success"] + final_stats["failed"]) * 100) if (final_stats["success"] + final_stats["failed"]) > 0 else 0
+    
+    final_text = (
+        f"🎯 <b>اكتمل الإبلاغ الجماعي المتزامن!</b>\n\n"
+        f"📊 <b>النتائج النهائية:</b>\n"
+        f"• إجمالي الدورات: {final_stats['total_cycles']}\n"
+        f"• البلاغات الناجحة: {final_stats['success']}\n"
+        f"• البلاغات الفاشلة: {final_stats['failed']}\n"
+        f"• معدل النجاح: {total_success_rate:.1f}%\n"
+        f"• متوسط وقت الدورة: {avg_cycle_time:.1f} ثانية\n"
+        f"• المدة الإجمالية: {str(timedelta(seconds=int(final_stats['total_time'])))}\n"
+        f"{cycle_summary}\n"
+        f"📋 تم حفظ تقرير مفصل في detailed_reports.log"
+    )
+    
+    try:
+        await progress_message.edit_text(final_text, parse_mode="HTML")
+    except Exception:
+        await context.bot.send_message(
+            chat_id=progress_message.chat_id,
+            text=final_text,
+            parse_mode="HTML"
+        )
+    
+    # حفظ التقرير المفصل
+    detailed_logger.info(f"📋 تقرير الإبلاغ الجماعي المتزامن: {json.dumps(final_stats, indent=2, ensure_ascii=False)}")
+
 async def process_enhanced_session(session: dict, targets: list, reports_per_account: int, 
                                  config: dict, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة جلسة واحدة مع تحقق مفصل"""
+    """معالجة جلسة واحدة مع تحقق مفصل - محدث للاستخدام التقليدي فقط"""
+    # هذه الدالة تُستخدم الآن للطرق التقليدية فقط
+    # الإبلاغ الجماعي المتزامن يستخدم execute_simultaneous_mass_reporting
+    
     session_id = session.get("id", "unknown")
     session_str = session.get("session")
     proxies = config.get("proxies", [])
@@ -895,7 +1146,7 @@ async def process_enhanced_session(session: dict, targets: list, reports_per_acc
         # إنشاء مبلغ محقق
         reporter = VerifiedReporter(client, context)
         
-        # تنفيذ البلاغات
+        # تنفيذ البلاغات (للطرق التقليدية فقط)
         for target in targets:
             if not config.get("active", True):
                 break
@@ -933,87 +1184,3 @@ async def process_enhanced_session(session: dict, targets: list, reports_per_acc
     finally:
         if client and client.is_connected():
             await client.disconnect()
-
-async def monitor_enhanced_progress(context: ContextTypes.DEFAULT_TYPE, 
-                                  progress_message: Any, session_tasks: list):
-    """مراقبة التقدم المحسنة مع إحصائيات مفصلة"""
-    config = context.user_data
-    start_time = config["start_time"]
-    
-    while config.get("active", True) and any(not t.done() for t in session_tasks):
-        async with config["lock"]:
-            success = config["progress_success"]
-            confirmed = config["progress_confirmed"]
-            failed = config["progress_failed"]
-            total = config["total_reports"]
-            
-        completed = success + failed
-        progress_percent = min(100, int((completed / total) * 100))
-        
-        elapsed = time.time() - start_time
-        if completed > 0:
-            eta_seconds = (elapsed / completed) * (total - completed)
-            eta_str = str(timedelta(seconds=int(eta_seconds)))
-        else:
-            eta_str = "حساب..."
-        
-        # شريط التقدم المحسن
-        filled = int(20 * (progress_percent / 100))
-        progress_bar = "█" * filled + "░" * (20 - filled)
-        
-        verification_rate = (confirmed / success * 100) if success > 0 else 0
-        
-        text = (
-            f"📊 <b>تقدم الإبلاغات المحققة</b>\n\n"
-            f"<code>[{progress_bar}]</code> {progress_percent}%\n\n"
-            f"📈 <b>الإحصائيات:</b>\n"
-            f"▫️ المطلوب: {total}\n"
-            f"✅ المرسل: {success}\n"
-            f"🔐 المحقق: {confirmed} ({verification_rate:.1f}%)\n"
-            f"❌ الفاشل: {failed}\n"
-            f"⏱ المتبقي: {eta_str}\n"
-            f"⏰ المدة: {str(timedelta(seconds=int(elapsed)))}"
-        )
-        
-        try:
-            await progress_message.edit_text(text, parse_mode="HTML")
-        except BadRequest:
-            pass
-        
-        await asyncio.sleep(3)
-    
-    # النتائج النهائية
-    async with config["lock"]:
-        final_stats = {
-            "success": config["progress_success"],
-            "confirmed": config["progress_confirmed"],
-            "failed": config["progress_failed"],
-            "verification_rate": (config["progress_confirmed"] / config["progress_success"] * 100) 
-                               if config["progress_success"] > 0 else 0,
-            "total_time": time.time() - start_time,
-            "verified_reports": len(config["detailed_stats"]["verified_reports"]),
-            "failed_sessions": len(config["detailed_stats"]["failed_sessions"])
-        }
-    
-    final_text = (
-        f"🎯 <b>اكتملت العملية المحققة!</b>\n\n"
-        f"📊 <b>النتائج النهائية:</b>\n"
-        f"• البلاغات المرسلة: {final_stats['success']}\n"
-        f"• البلاغات المحققة: {final_stats['confirmed']}\n"
-        f"• معدل التحقق: {final_stats['verification_rate']:.1f}%\n"
-        f"• الجلسات الفاشلة: {final_stats['failed_sessions']}\n"
-        f"• المدة الإجمالية: {str(timedelta(seconds=int(final_stats['total_time'])))}\n\n"
-        f"📋 تم حفظ تقرير مفصل في detailed_reports.log"
-    )
-    
-    try:
-        await progress_message.edit_text(final_text, parse_mode="HTML")
-    except Exception:
-        await context.bot.send_message(
-            chat_id=progress_message.chat_id,
-            text=final_text,
-            parse_mode="HTML"
-        )
-    
-    # حفظ التقرير المفصل
-    detailed_logger.info(f"📋 تقرير نهائي: {json.dumps(final_stats, indent=2, ensure_ascii=False)}")
