@@ -96,11 +96,70 @@ class EnhancedProxyChecker:
         self.failed_proxies = set()
         self.last_check_times = {}
         self.concurrent_checks = 3  # عدد الفحوصات المتزامنة
+    
+    def validate_proxy_data(self, proxy_info: dict) -> bool:
+        """التحقق من صحة بيانات البروكسي قبل الاستخدام"""
+        try:
+            if not proxy_info or not isinstance(proxy_info, dict):
+                return False
+                
+            # التحقق من وجود الحقول المطلوبة
+            required_fields = ["server", "port", "secret"]
+            for field in required_fields:
+                if field not in proxy_info or not proxy_info[field]:
+                    detailed_logger.error(f"❌ حقل مفقود في البروكسي: {field}")
+                    return False
+            
+            # التحقق من صحة المنفذ
+            port = proxy_info["port"]
+            if not isinstance(port, int) or port < 1 or port > 65535:
+                detailed_logger.error(f"❌ منفذ غير صالح: {port}")
+                return False
+            
+            # التحقق من صحة السر
+            secret = proxy_info["secret"]
+            if isinstance(secret, str):
+                # طباعة معلومات تشخيصية
+                detailed_logger.info(f"🔍 فحص السر: نوع={type(secret)}, طول={len(secret)}, محتوى={secret[:20]}...")
+                
+                # يجب أن يكون السر سداسي عشري صالح
+                if len(secret) % 2 != 0:
+                    detailed_logger.error(f"❌ طول السر غير صالح: {len(secret)}")
+                    return False
+                try:
+                    test_bytes = bytes.fromhex(secret)
+                    detailed_logger.info(f"✅ السر صالح، تم تحويله إلى {len(test_bytes)} بايت")
+                except ValueError as e:
+                    detailed_logger.error(f"❌ سر غير صالح (ليس سداسي عشري): {secret[:20]}... - خطأ: {e}")
+                    return False
+            elif isinstance(secret, bytes):
+                # إذا كان bytes، فهو صالح
+                pass
+            else:
+                detailed_logger.error(f"❌ نوع سر غير صالح: {type(secret)}")
+                return False
+                
+            return True
+            
+        except Exception as e:
+            detailed_logger.error(f"❌ خطأ في التحقق من البروكسي: {e}")
+            return False
         
     async def deep_proxy_test(self, session_str: str, proxy_info: dict) -> dict:
         """اختبار عميق للبروكسي مع فحوصات متعددة"""
         result = proxy_info.copy()
         client = None
+        
+        detailed_logger.info(f"🔍 بدء deep_proxy_test للبروكسي {proxy_info.get('server', 'مجهول')}")
+        
+        # التحقق من صحة البيانات أولاً
+        if not self.validate_proxy_data(proxy_info):
+            result.update({
+                "status": "invalid",
+                "error": "بيانات البروكسي غير صالحة",
+                "quality_score": 0
+            })
+            return result
         
         try:
             # إعداد العميل مع timeout صارم
@@ -115,20 +174,35 @@ class EnhancedProxyChecker:
                 "lang_code": "ar"
             }
             
-            # تحضير السر
+            # تحضير السر مع معالجة محسنة
             secret = proxy_info["secret"]
+            detailed_logger.info(f"🔍 تحضير السر: نوع={type(secret)}, طول={len(secret) if secret else 0}")
+            
             if isinstance(secret, str):
                 try:
+                    detailed_logger.info(f"🔍 محاولة fromhex على السر: {secret[:20]}...")
                     secret_bytes = bytes.fromhex(secret)
-                except ValueError:
-                    raise ProxyTestFailed(f"سر غير صالح: {secret}")
-            else:
+                    detailed_logger.info(f"✅ نجح fromhex، تم إنتاج {len(secret_bytes)} بايت")
+                except ValueError as e:
+                    # محاولة تشفير السر كـ UTF-8 إذا فشل fromhex
+                    detailed_logger.warning(f"⚠️ فشل fromhex ({e}), استخدام UTF-8 encoding للسر: {secret[:20]}...")
+                    secret_bytes = secret.encode('utf-8')
+            elif isinstance(secret, bytes):
+                detailed_logger.info(f"🔍 السر بالفعل bytes: {len(secret)} بايت")
                 secret_bytes = secret
+            else:
+                # إذا لم يكن string أو bytes، محاولة تحويله
+                try:
+                    detailed_logger.warning(f"⚠️ نوع سر غير متوقع: {type(secret)}, محاولة تحويل...")
+                    secret_bytes = bytes(secret)
+                except (TypeError, ValueError):
+                    raise ProxyTestFailed(f"نوع سر غير مدعوم: {type(secret)}")
                 
+            # telethon تتوقع السر كـ string وليس bytes
             params["proxy"] = (
                 proxy_info["server"],
                 proxy_info["port"],
-                secret_bytes
+                proxy_info["secret"]  # استخدام السر الأصلي كـ string
             )
             
             # اختبار الاتصال الأولي
@@ -208,6 +282,9 @@ class EnhancedProxyChecker:
             self.failed_proxies.add(proxy_info["server"])
             
         except Exception as e:
+            import traceback
+            detailed_logger.error(f"❌ خطأ عام في deep_proxy_test للبروكسي {proxy_info['server']}: {e}")
+            detailed_logger.error(f"📍 تتبع الخطأ الكامل:\n{traceback.format_exc()}")
             result.update({
                 "status": "error",
                 "ping": 0,
@@ -342,6 +419,31 @@ class VerifiedReporter:
         self.stats["last_report"] = time.time()
         self.last_activity = time.time()
     
+    def validate_username(self, username: str) -> bool:
+        """التحقق من صحة اسم المستخدم قبل المحاولة"""
+        if not username:
+            return False
+            
+        # إزالة @ إن وُجد
+        if username.startswith('@'):
+            username = username[1:]
+            
+        # التحقق من طول الاسم
+        if len(username) < 4 or len(username) > 32:
+            return False
+            
+        # التحقق من النمط الصحيح
+        import re
+        pattern = r"^[a-zA-Z][a-zA-Z0-9_]{2,30}[a-zA-Z0-9]$"
+        if not re.match(pattern, username):
+            return False
+            
+        # التحقق من عدم وجود أحرف متتالية غير مسموحة
+        if '__' in username or username.endswith('_'):
+            return False
+            
+        return True
+    
     async def resolve_target_enhanced(self, target: str | dict) -> dict:
         """حل الهدف مع معلومات إضافية للتتبع"""
         try:
@@ -372,6 +474,12 @@ class VerifiedReporter:
                     })
             else:
                 # اسم مستخدم أو معرف
+                # التحقق من صحة اسم المستخدم أولاً
+                if isinstance(target, str) and not target.isdigit():
+                    if not self.validate_username(target):
+                        detailed_logger.error(f"❌ اسم مستخدم غير صالح: {target}")
+                        return None
+                        
                 entity = await self.client.get_entity(target)
                 target_info.update({
                     "resolved": utils.get_input_peer(entity),
@@ -382,7 +490,16 @@ class VerifiedReporter:
             return target_info
             
         except Exception as e:
-            detailed_logger.error(f"❌ فشل في حل الهدف {target}: {e}")
+            # معالجة مفصلة لأنواع الأخطاء المختلفة
+            error_msg = str(e)
+            if "Nobody is using this username" in error_msg or "username is unacceptable" in error_msg:
+                detailed_logger.error(f"❌ اسم المستخدم غير صالح أو غير موجود: {target} - {error_msg}")
+            elif "Could not find the input entity" in error_msg:
+                detailed_logger.error(f"❌ لم يتم العثور على الهدف: {target} - {error_msg}")
+            elif "A wait of" in error_msg and "seconds is required" in error_msg:
+                detailed_logger.error(f"❌ يجب الانتظار قبل المحاولة مرة أخرى: {target} - {error_msg}")
+            else:
+                detailed_logger.error(f"❌ فشل في حل الهدف {target}: {e}")
             return None
     
     def parse_message_link(self, link: str) -> dict | None:
@@ -422,7 +539,9 @@ class VerifiedReporter:
         target_info = await self.resolve_target_enhanced(target)
         if not target_info or not target_info["resolved"]:
             self.stats["failed"] += reports_count
-            return {"success": False, "error": "فشل في حل الهدف"}
+            error_msg = "فشل في حل الهدف - تأكد من صحة اسم المستخدم أو رابط القناة"
+            detailed_logger.warning(f"❌ تخطي البلاغ بسبب هدف غير صالح: {target}")
+            return {"success": False, "error": error_msg}
         
         report_results = []
         
@@ -728,10 +847,20 @@ async def process_enhanced_session(session: dict, targets: list, reports_per_acc
         }
         
         if current_proxy:
-            secret_bytes = bytes.fromhex(current_proxy["secret"])
+            # تحضير السر مع فحص النوع
+            secret = current_proxy["secret"]
+            if isinstance(secret, str):
+                try:
+                    secret_bytes = bytes.fromhex(secret)
+                except ValueError:
+                    logger.error(f"سر غير صالح: {secret}")
+                    secret_bytes = secret.encode() if isinstance(secret, str) else secret
+            else:
+                secret_bytes = secret
+                
             params.update({
                 "connection": ConnectionTcpMTProxyRandomizedIntermediate,
-                "proxy": (current_proxy["server"], current_proxy["port"], secret_bytes)
+                "proxy": (current_proxy["server"], current_proxy["port"], current_proxy["secret"])
             })
         
         # الاتصال
