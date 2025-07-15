@@ -7,6 +7,53 @@ from pytdlib.api import types as td_types
 
 logger = logging.getLogger(__name__)
 
+# استثناءات مخصصة لـ TDLib للتعامل مع أخطاء API
+class TDLibError(Exception):
+    """استثناء أساسي لـ TDLib"""
+    pass
+
+class SessionPasswordNeededError(TDLibError):
+    """يُرفع عندما يكون الحساب محمي بكلمة مرور ثنائية"""
+    pass
+
+class PhoneCodeInvalidError(TDLibError):
+    """يُرفع عندما يكون رمز التحقق غير صحيح"""
+    pass
+
+class PhoneCodeExpiredError(TDLibError):
+    """يُرفع عندما ينتهي رمز التحقق"""
+    pass
+
+class AuthKeyDuplicatedError(TDLibError):
+    """يُرفع عندما يكون مفتاح المصادقة مكرر"""
+    pass
+
+class FloodWaitError(TDLibError):
+    """يُرفع عندما نحتاج للانتظار بسبب حد المعدل"""
+    def __init__(self, seconds):
+        self.seconds = seconds
+        super().__init__(f"Flood wait for {seconds} seconds")
+
+class PeerFloodError(TDLibError):
+    """يُرفع عندما نصل لحد إرسال الرسائل"""
+    pass
+
+class ChannelPrivateError(TDLibError):
+    """يُرفع عندما تكون القناة خاصة"""
+    pass
+
+class UsernameNotOccupiedError(TDLibError):
+    """يُرفع عندما لا يكون اسم المستخدم مستخدماً"""
+    pass
+
+class PeerIdInvalidError(TDLibError):
+    """يُرفع عندما يكون معرف المستخدم غير صالح"""
+    pass
+
+class RPCError(TDLibError):
+    """استثناء عام لأخطاء RPC"""
+    pass
+
 class TDLibClient:
     def __init__(self, api_id, api_hash, phone, session_dir='tdlib_sessions', proxy=None):
         self.api_id = api_id
@@ -39,10 +86,38 @@ class TDLibClient:
             logger.info(f"TDLib client stopped for {self.phone}")
 
     async def send_code(self):
-        return await self.client.send_code_request(self.phone)
+        try:
+            return await self.client.send_code_request(self.phone)
+        except Exception as e:
+            # تحويل أخطاء TDLib إلى استثناءات مخصصة
+            error_msg = str(e).lower()
+            if 'phone_code_expired' in error_msg:
+                raise PhoneCodeExpiredError()
+            elif 'phone_code_invalid' in error_msg:
+                raise PhoneCodeInvalidError()
+            else:
+                raise TDLibError(str(e))
 
     async def sign_in(self, code, password=None):
-        return await self.client.sign_in(self.phone, code, password=password)
+        try:
+            return await self.client.sign_in(self.phone, code, password=password)
+        except Exception as e:
+            # تحويل أخطاء TDLib إلى استثناءات مخصصة
+            error_msg = str(e).lower()
+            if 'password_required' in error_msg or '2fa' in error_msg:
+                raise SessionPasswordNeededError()
+            elif 'phone_code_invalid' in error_msg:
+                raise PhoneCodeInvalidError()
+            elif 'phone_code_expired' in error_msg:
+                raise PhoneCodeExpiredError()
+            elif 'flood_wait' in error_msg:
+                # استخراج عدد الثواني من رسالة الخطأ
+                import re
+                match = re.search(r'(\d+)', error_msg)
+                seconds = int(match.group(1)) if match else 60
+                raise FloodWaitError(seconds)
+            else:
+                raise TDLibError(str(e))
 
     async def get_me(self):
         return await self.client.get_me()
@@ -85,8 +160,17 @@ class TDLibClient:
                 )
             )
         except Exception as e:
-            logger.error(f"خطأ في report_peer: {e}")
-            return None
+            error_msg = str(e).lower()
+            if 'flood_wait' in error_msg:
+                import re
+                match = re.search(r'(\d+)', error_msg)
+                seconds = int(match.group(1)) if match else 60
+                raise FloodWaitError(seconds)
+            elif 'peer_flood' in error_msg:
+                raise PeerFloodError()
+            else:
+                logger.error(f"خطأ في report_peer: {e}")
+                raise RPCError(str(e))
 
     async def report_message(self, chat_id, message_ids, reason, message=""):
         # إرسال بلاغ على رسالة أو عدة رسائل
@@ -100,7 +184,16 @@ class TDLibClient:
                 )
             )
         except Exception as e:
-            logger.error(f"خطأ في report_message: {e}")
-            return None
+            error_msg = str(e).lower()
+            if 'flood_wait' in error_msg:
+                import re
+                match = re.search(r'(\d+)', error_msg)
+                seconds = int(match.group(1)) if match else 60
+                raise FloodWaitError(seconds)
+            elif 'peer_flood' in error_msg:
+                raise PeerFloodError()
+            else:
+                logger.error(f"خطأ في report_message: {e}")
+                raise RPCError(str(e))
 
     # يمكن إضافة المزيد من الدوال حسب الحاجة (إرسال تقارير، إلخ)

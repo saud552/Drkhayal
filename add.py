@@ -26,7 +26,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.backends import default_backend
 from encryption import encrypt_session, decrypt_session
-from Telegram.tdlib_client import TDLibClient
+from Telegram.tdlib_client import TDLibClient, SessionPasswordNeededError, PhoneCodeInvalidError, PhoneCodeExpiredError
 # ========== إعدادات التهيئة ==========
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -395,7 +395,7 @@ async def add_account_method(update: Update, context: ContextTypes.DEFAULT_TYPE)
             return await start_from_query(query, context)
         
         await query.edit_message_text(
-            "🔑 الرجاء إرسال كود جلسة Telethon الجاهز:",
+                            "🔑 الرجاء إرسال كود جلسة TDLib الجاهز:",
             reply_markup=None
         )
         return ADD_ACCOUNT_SESSION
@@ -764,7 +764,7 @@ async def finalize_account_registration(update: Update, context: ContextTypes.DE
                 raise ValueError("الفئة غير موجودة")
             category_id = row[0]
 
-        # 5. حفظ جلسة Telethon مشفّرة
+        # 5. حفظ جلسة TDLib مشفّرة
         session_str = client.session.save()
         encrypted_session = encrypt_session(session_str)
 

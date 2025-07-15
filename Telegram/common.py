@@ -13,7 +13,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import BadRequest
 from telegram.ext import ContextTypes, ConversationHandler
 
-from Telegram.tdlib_client import TDLibClient
+from Telegram.tdlib_client import TDLibClient, FloodWaitError, PeerFloodError, AuthKeyDuplicatedError, SessionPasswordNeededError, RPCError
 from encryption import decrypt_session
 from config import API_ID, API_HASH
 from add import safe_db_query

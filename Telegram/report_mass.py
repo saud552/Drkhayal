@@ -4,9 +4,6 @@ import asyncio
 import re
 import time
 from datetime import datetime, timedelta
-from telethon import TelegramClient
-from telethon.sessions import StringSession
-from telethon.errors.rpcerrorlist import ChannelPrivateError, UsernameNotOccupiedError, FloodWaitError, PeerIdInvalidError
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ConversationHandler,
@@ -35,6 +32,7 @@ except ImportError:
 
 from .common import run_report_process, cancel_operation, REPORT_TYPES, parse_message_link
 from .common_improved import run_enhanced_report_process
+from .tdlib_client import ChannelPrivateError, UsernameNotOccupiedError, FloodWaitError, PeerIdInvalidError
 
 # States
 (
