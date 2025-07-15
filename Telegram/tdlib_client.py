@@ -60,10 +60,35 @@ class TDLibClient:
         self.api_hash = api_hash
         self.phone = phone
         self.session_dir = session_dir
-        self.proxy = proxy
+        self.proxy = self._prepare_proxy(proxy) if proxy else None
         self.client = None
         self.session_path = os.path.join(session_dir, f'{self.phone}')
         os.makedirs(self.session_dir, exist_ok=True)
+
+    def _prepare_proxy(self, proxy_config):
+        """تحضير إعدادات البروكسي للاستخدام مع TDLib"""
+        if not proxy_config:
+            return None
+            
+        if isinstance(proxy_config, dict):
+            if proxy_config.get('type') == 'mtproto':
+                return {
+                    'type': 'mtproto',
+                    'server': proxy_config['server'],
+                    'port': int(proxy_config['port']),
+                    'secret': proxy_config['secret']
+                }
+        
+        # إذا كان البروكسي في تنسيق tuple قديم
+        elif isinstance(proxy_config, (tuple, list)) and len(proxy_config) >= 3:
+            return {
+                'type': 'mtproto',
+                'server': proxy_config[0],
+                'port': int(proxy_config[1]),
+                'secret': proxy_config[2]
+            }
+            
+        return proxy_config
 
     async def start(self):
         self.client = AsyncTDLibClient(

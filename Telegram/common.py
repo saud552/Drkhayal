@@ -146,73 +146,121 @@ def get_accounts(category_id):
 
 def parse_proxy_link(link: str) -> dict | None:
     """
-    يحلل رابط بروكسي MTProto من نوع tg://proxy أو https://t.me/proxy ويستخرج المضيف والمنفذ والسرّ.
-    يدعم المفاتيح الهكسية (مع بادئة dd أو ee أو بدونها) والمشفّرة بـ base64 URL-safe.
+    يحلل رابط بروكسي MTProto من نوع https://t.me/proxy ويستخرج المضيف والمنفذ والسرّ.
+    يدعم جميع أنواع الأسرار MTProto (dd وee prefixes).
+    
+    مثال: https://t.me/proxy?server=example.com&port=8888&secret=eeNEgYdJvXrFGRMC...
     """
     try:
+        # تنظيف الرابط
+        link = link.strip()
+        
+        # التعامل مع روابط t.me و tg://
+        if link.startswith('tg://proxy'):
+            link = link.replace('tg://proxy', 'https://t.me/proxy')
+        
         parsed = urlparse(link)
+        if parsed.netloc != 't.me' or not parsed.path.startswith('/proxy'):
+            logger.warning(f"رابط بروكسي غير معترف به: {link}")
+            return None
+            
         params = parse_qs(parsed.query)
 
-        # محاولة استخراج المعلمات من query string
-        server = params.get('server', [''])[0]
-        port = params.get('port', [''])[0]
-        secret = params.get('secret', [''])[0]
+        # استخراج المعلمات
+        server = params.get('server', [''])[0].strip()
+        port_str = params.get('port', [''])[0].strip()
+        secret = params.get('secret', [''])[0].strip()
 
-        # إذا لم تُعثر المعلمات في query، حاول من المسار
-        if not server or not port or not secret:
-            path_parts = parsed.path.lstrip('/').split('/')
-            if len(path_parts) >= 3:
-                server = path_parts[0]
-                port = path_parts[1]
-                secret = '/'.join(path_parts[2:])
-
-        if not server or not port or not secret:
-            # رابط غير صالح
+        if not server or not port_str or not secret:
+            logger.error(f"معلمات ناقصة في رابط البروكسي: server={server}, port={port_str}, secret={'***' if secret else 'None'}")
             return None
 
-        server = server.strip()
-        port = int(port)
-        secret = secret.strip()
-
-        # تحويل السر إلى تنسيق سداسي ثابت
-        hex_secret = convert_secret(secret)
-        if not hex_secret:
+        # التحقق من صحة المنفذ
+        try:
+            port = int(port_str)
+            if not (1 <= port <= 65535):
+                logger.error(f"منفذ غير صالح: {port}")
+                return None
+        except ValueError:
+            logger.error(f"منفذ غير صالح: {port_str}")
             return None
 
-        return {'server': server, 'port': port, 'secret': hex_secret, 'format': 'hex'}
+        # معالجة السر
+        processed_secret = convert_secret(secret)
+        if not processed_secret:
+            logger.error(f"سر بروكسي غير صالح: {secret[:20]}...")
+            return None
+
+        return {
+            'server': server,
+            'port': port,
+            'secret': processed_secret,
+            'type': 'mtproto',
+            'original_secret': secret[:20] + '...' if len(secret) > 20 else secret
+        }
+        
     except Exception as e:
         logger.error(f"خطأ في تحليل رابط البروكسي: {e}")
         return None
         
 def convert_secret(secret: str) -> str | None:
     """
-    يحول سلسلة السرّ إلى تمثيل هكس ثابت (32-64 حرفًا أو أكثر).
-    يدعم الصيغ الهكسية ونصوص base64 URL-safe.
+    يحول سلسلة السرّ إلى تمثيل هكس ثابت للاستخدام مع MTProto.
+    يدعم:
+    - البادئات الشائعة: ee, dd
+    - تشفير base64 URL-safe
+    - نصوص هكس مباشرة
     """
-    secret = secret.strip()
-
-    # إزالة أي أحرف غير سداسية
-    clean_secret = re.sub(r'[^A-Fa-f0-9]', '', secret)
-    
-    # إذا كان السرّ نص هكس (مجموعة [0-9A-Fa-f] فقط بطول زوجي)
-    if re.fullmatch(r'[A-Fa-f0-9]+', clean_secret) and len(clean_secret) % 2 == 0:
-        return clean_secret.lower()  # نعيدها بالصيغة العادية (أحرف صغيرة)
-    
-    # محاولة فك base64 URL-safe
-    try:
-        # إزالة البادئات الشائعة (ee, dd)
-        if secret.startswith(('ee', 'dd')):
-            secret = secret[2:]
-            
-        # إضافة الحشو المفقود
-        cleaned = secret.replace('-', '+').replace('_', '/')
-        padding = '=' * (-len(cleaned) % 4)
-        decoded = base64.b64decode(cleaned + padding)
+    if not secret:
+        return None
         
-        # التحويل إلى سلسلة سداسية (hex string)
-        return decoded.hex()
+    secret = secret.strip()
+    original_secret = secret
+
+    try:
+        # 1. إذا كان السرّ نص هكس مباشر
+        clean_secret = re.sub(r'[^A-Fa-f0-9]', '', secret)
+        if re.fullmatch(r'[A-Fa-f0-9]+', clean_secret) and len(clean_secret) % 2 == 0 and len(clean_secret) >= 32:
+            logger.debug(f"تم التعرف على سر هكس مباشر: {len(clean_secret)} أحرف")
+            return clean_secret.lower()
+        
+        # 2. معالجة أسرار MTProto مع البادئات
+        prefix = None
+        if secret.startswith(('ee', 'dd')):
+            prefix = secret[:2]
+            secret = secret[2:]
+            logger.debug(f"تم اكتشاف بادئة: {prefix}")
+        
+        # 3. فك تشفير base64 URL-safe
+        # تحويل URL-safe base64 إلى base64 عادي
+        cleaned = secret.replace('-', '+').replace('_', '/')
+        
+        # إضافة الحشو المفقود
+        padding_needed = 4 - (len(cleaned) % 4)
+        if padding_needed != 4:
+            cleaned += '=' * padding_needed
+        
+        # فك التشفير
+        decoded = base64.b64decode(cleaned)
+        
+        # إضافة البادئة إذا كانت موجودة
+        if prefix:
+            prefix_bytes = bytes.fromhex(prefix)
+            decoded = prefix_bytes + decoded
+        
+        # التحويل إلى نص هكس
+        hex_result = decoded.hex()
+        
+        # التحقق من طول السر (يجب أن يكون 32 أو 64 أو 128 بايت على الأقل)
+        if len(hex_result) < 32:
+            logger.warning(f"سر قصير جداً: {len(hex_result)} أحرف")
+            return None
+            
+        logger.debug(f"تم تحويل السر بنجاح: {len(hex_result)} أحرف hex")
+        return hex_result.lower()
+        
     except Exception as e:
-        logger.error(f"خطأ في تحويل السر: {e}")
+        logger.error(f"خطأ في تحويل السر '{original_secret[:20]}...': {e}")
         return None
 
 # --- نظام فحص وتدوير البروكسي ---
@@ -221,91 +269,97 @@ class ProxyChecker:
         self.proxy_stats = {}
         self.check_intervals = [5, 10, 15, 30, 60]  # ثواني بين الفحوصات
 
-    async def check_proxy(self, session_str: str, proxy_info: dict) -> dict:
-        """فحص جودة البروكسي مع دعم السرود 32/64 حرفًا"""
+    async def check_proxy(self, phone: str, proxy_info: dict) -> dict:
+        """فحص جودة البروكسي MTProto باستخدام TDLib"""
         start_time = time.time()
         client = None
         result = proxy_info.copy()
         
         try:
-            # إعداد معلمات العميل
-            params = {
-                "api_id": API_ID,
-                "api_hash": API_HASH,
-                "timeout": 10,
-                "connection": ConnectionTcpMTProxyRandomizedIntermediate,
+            # معالجة السر وتحويله للتنسيق الصحيح
+            secret = proxy_info["secret"]
+            if not secret:
+                raise ValueError("سر البروكسي مفقود")
+            
+            # تأكد أن السر في تنسيق hex
+            if isinstance(secret, str) and re.fullmatch(r'[A-Fa-f0-9]+', secret):
+                secret_bytes = bytes.fromhex(secret)
+            else:
+                raise ValueError(f"سر البروكسي ليس في تنسيق hex صحيح: {secret[:20]}...")
+            
+            # إعداد معلومات البروكسي لـ TDLib
+            proxy_config = {
+                'type': 'mtproto',
+                'server': proxy_info["server"],
+                'port': proxy_info["port"],
+                'secret': secret_bytes
             }
             
-            # معالجة السر - يجب أن يكون في تنسيق سداسي
-            secret = proxy_info["secret"]
-            
-            # تأكد أن السر هو سلسلة نصية (str)
-            if isinstance(secret, bytes):
-                try:
-                    secret = secret.decode('utf-8')
-                except UnicodeDecodeError:
-                    # إذا فشل التحويل، نستخدم التمثيل السداسي للبايتات
-                    secret = secret.hex()
-            
-            # تحويل السر إلى بايتات
-            try:
-                secret_bytes = bytes.fromhex(secret)
-            except ValueError:
-                logger.error(f"❌ سر البروكسي غير صالح: {secret}")
-                result.update({
-                    "ping": 0,
-                    "response_time": 0,
-                    "last_check": int(time.time()),
-                    "status": "invalid_secret",
-                    "error": "تنسيق سر غير صالح"
-                })
-                return result
-            
-            # إنشاء كائن البروكسي المناسب
-            params["proxy"] = (
-                proxy_info["server"],
-                proxy_info["port"],
-                secret_bytes
+            # إنشاء عميل TDLib مع البروكسي
+            client = TDLibClient(
+                api_id=API_ID,
+                api_hash=API_HASH,
+                phone=phone,
+                proxy=proxy_config
             )
             
-            # إنشاء العميل والتوصيل
-            client = TDLibClient(session_str, **params)
-            await client.connect()
+            # قياس وقت الاتصال
+            connect_start = time.time()
+            await client.start()
+            connect_time = time.time() - connect_start
             
-            # قياس سرعة الاتصال
-            connect_time = time.time() - start_time
+            # فحص فعالية البروكسي بجلب معلومات المستخدم
+            test_start = time.time()
+            me = await client.get_me()
+            test_time = time.time() - test_start
             
-            # فحص فعالية البروكسي بمحاولة جلب معلومات بسيطة
-            start_req = time.time()
-            await client.get_me()
-            response_time = time.time() - start_req
+            if me:
+                total_time = time.time() - start_time
+                result.update({
+                    "ping": int(connect_time * 1000),
+                    "response_time": int(test_time * 1000),
+                    "total_time": int(total_time * 1000),
+                    "last_check": int(time.time()),
+                    "status": "active",
+                    "user_id": me.get('id') if isinstance(me, dict) else None
+                })
+                logger.info(f"✅ بروكسي نشط: {proxy_info['server']}:{proxy_info['port']} - ping: {int(connect_time * 1000)}ms")
+            else:
+                raise Exception("فشل في جلب معلومات المستخدم")
             
-            result.update({
-                "ping": int(connect_time * 1000),
-                "response_time": int(response_time * 1000),
-                "last_check": int(time.time()),
-                "status": "active"
-            })
-            
-        except RPCError as e:
+        except FloodWaitError as e:
+            logger.warning(f"⏳ انتظار مطلوب للبروكسي {proxy_info['server']}: {e.seconds}s")
             result.update({
                 "ping": 0,
                 "response_time": 0,
                 "last_check": int(time.time()),
-                "status": "connection_error",
-                "error": str(e)
+                "status": "flood_wait",
+                "error": f"انتظار {e.seconds} ثانية",
+                "retry_after": int(time.time()) + e.seconds
             })
         except Exception as e:
+            error_msg = str(e).lower()
+            if 'timeout' in error_msg or 'connection' in error_msg:
+                status = "timeout"
+            elif 'invalid' in error_msg or 'wrong' in error_msg:
+                status = "invalid"
+            else:
+                status = "error"
+                
+            logger.warning(f"❌ فشل فحص البروكسي {proxy_info['server']}: {e}")
             result.update({
                 "ping": 0,
                 "response_time": 0,
                 "last_check": int(time.time()),
-                "status": "error",
-                "error": str(e)
+                "status": status,
+                "error": str(e)[:200]  # تحديد طول رسالة الخطأ
             })
         finally:
-            if client and client.is_connected():
-                await client.disconnect()
+            if client:
+                try:
+                    await client.stop()
+                except:
+                    pass
         
         # تحديث إحصائيات البروكسي
         self.proxy_stats[proxy_info["server"]] = result

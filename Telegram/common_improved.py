@@ -557,77 +557,122 @@ class VerifiedReporter:
 # === دوال مساعدة محسنة ===
 
 def convert_secret_enhanced(secret: str) -> str | None:
-    """تحويل سر البروكسي محسن مع دعم جميع الصيغ"""
+    """
+    تحويل سر البروكسي محسن مع دعم جميع الصيغ MTProto.
+    متوافق مع النظام الأساسي مع تحسينات إضافية.
+    """
+    if not secret:
+        return None
+        
     secret = secret.strip()
-    
-    # إزالة المسافات والأحرف الخاصة
-    clean_secret = re.sub(r'[^A-Fa-f0-9]', '', secret)
-    
-    # فحص الصيغة السداسية
-    if re.fullmatch(r'[A-Fa-f0-9]+', clean_secret) and len(clean_secret) % 2 == 0:
-        if len(clean_secret) >= 32:  # سر صالح
-            return clean_secret.lower()
-    
-    # محاولة فك base64
+    original_secret = secret
+
     try:
-        # إزالة البادئات
-        for prefix in ['ee', 'dd', '00']:
-            if secret.startswith(prefix):
-                secret = secret[len(prefix):]
-                break
+        # 1. فحص الصيغة السداسية المباشرة
+        clean_secret = re.sub(r'[^A-Fa-f0-9]', '', secret)
+        if re.fullmatch(r'[A-Fa-f0-9]+', clean_secret) and len(clean_secret) % 2 == 0 and len(clean_secret) >= 32:
+            logger.debug(f"[Enhanced] تم التعرف على سر هكس مباشر: {len(clean_secret)} أحرف")
+            return clean_secret.lower()
         
-        # تحويل base64 URL-safe
+        # 2. معالجة أسرار MTProto مع البادئات
+        prefix = None
+        if secret.startswith(('ee', 'dd')):
+            prefix = secret[:2]
+            secret = secret[2:]
+            logger.debug(f"[Enhanced] تم اكتشاف بادئة: {prefix}")
+        
+        # 3. فك تشفير base64 URL-safe محسن
+        # تحويل URL-safe base64 إلى base64 عادي
         cleaned = secret.replace('-', '+').replace('_', '/')
-        padding = '=' * (-len(cleaned) % 4)
-        decoded = base64.b64decode(cleaned + padding)
         
-        hex_secret = decoded.hex()
-        if len(hex_secret) >= 32:
-            return hex_secret
+        # إضافة الحشو المفقود بطريقة محسنة
+        padding_needed = 4 - (len(cleaned) % 4)
+        if padding_needed != 4:
+            cleaned += '=' * padding_needed
+        
+        # فك التشفير
+        decoded = base64.b64decode(cleaned)
+        
+        # إضافة البادئة إذا كانت موجودة
+        if prefix:
+            prefix_bytes = bytes.fromhex(prefix)
+            decoded = prefix_bytes + decoded
+        
+        # التحويل إلى نص هكس
+        hex_result = decoded.hex()
+        
+        # التحقق من طول السر (يجب أن يكون 32 أو أكثر)
+        if len(hex_result) < 32:
+            logger.warning(f"[Enhanced] سر قصير جداً: {len(hex_result)} أحرف")
+            return None
             
-    except Exception:
-        pass
-    
-    return None
+        logger.debug(f"[Enhanced] تم تحويل السر بنجاح: {len(hex_result)} أحرف hex")
+        return hex_result.lower()
+        
+    except Exception as e:
+        logger.error(f"[Enhanced] خطأ في تحويل السر '{original_secret[:20]}...': {e}")
+        return None
 
 def parse_proxy_link_enhanced(link: str) -> dict | None:
-    """تحليل رابط البروكسي محسن مع دعم صيغ متعددة"""
+    """
+    تحليل رابط البروكسي محسن مع دعم صيغ متعددة ومعالجة أخطاء قوية.
+    متوافق مع جميع أنواع روابط MTProto.
+    """
     try:
+        # تنظيف الرابط
+        link = link.strip()
+        
+        # التعامل مع روابط t.me و tg://
+        if link.startswith('tg://proxy'):
+            link = link.replace('tg://proxy', 'https://t.me/proxy')
+        
         parsed = urlparse(link)
+        if parsed.netloc != 't.me' or not parsed.path.startswith('/proxy'):
+            logger.warning(f"[Enhanced] رابط بروكسي غير معترف به: {link}")
+            return None
+            
         params = parse_qs(parsed.query)
         
-        server = params.get('server', [''])[0]
-        port = params.get('port', [''])[0]
-        secret = params.get('secret', [''])[0]
+        # استخراج المعلمات
+        server = params.get('server', [''])[0].strip()
+        port_str = params.get('port', [''])[0].strip()
+        secret = params.get('secret', [''])[0].strip()
         
-        if not all([server, port, secret]):
-            # محاولة استخراج من المسار
-            parts = parsed.path.strip('/').split('/')
-            if len(parts) >= 3:
-                server, port, secret = parts[0], parts[1], '/'.join(parts[2:])
-        
-        if not all([server, port, secret]):
+        # فحص المعلمات الناقصة
+        if not server or not port_str or not secret:
+            logger.error(f"[Enhanced] معلمات ناقصة في رابط البروكسي: server={server}, port={port_str}, secret={'***' if secret else 'None'}")
             return None
         
+        # التحقق من صحة المنفذ
         try:
-            port = int(port)
+            port = int(port_str)
+            if not (1 <= port <= 65535):
+                logger.error(f"[Enhanced] منفذ غير صالح: {port}")
+                return None
         except ValueError:
+            logger.error(f"[Enhanced] منفذ غير صالح: {port_str}")
             return None
         
+        # معالجة السر
         hex_secret = convert_secret_enhanced(secret)
         if not hex_secret:
+            logger.error(f"[Enhanced] سر بروكسي غير صالح: {secret[:20]}...")
             return None
         
         return {
-            'server': server.strip(),
+            'server': server,
             'port': port,
             'secret': hex_secret,
+            'type': 'mtproto',
             'format': 'hex',
-            'original_link': link
+            'original_link': link,
+            'original_secret': secret[:20] + '...' if len(secret) > 20 else secret,
+            'quality_score': 0,  # سيتم تحديثه عند الفحص
+            'status': 'unchecked'
         }
         
     except Exception as e:
-        logger.error(f"خطأ في تحليل رابط البروكسي: {e}")
+        logger.error(f"[Enhanced] خطأ في تحليل رابط البروكسي: {e}")
         return None
 
 # === إنشاء المكونات المحسنة ===
