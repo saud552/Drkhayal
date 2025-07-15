@@ -63,4 +63,44 @@ class TDLibClient:
     async def get_messages(self, chat_id, limit=10):
         return await self.client.get_messages(chat_id, limit=limit)
 
+    async def resolve_target(self, target):
+        # يدعم username أو id أو رابط قناة/مجموعة
+        try:
+            if isinstance(target, str) and target.startswith('https://t.me/'):
+                username = target.split('/')[-1]
+                return await self.get_chat(username)
+            return await self.get_chat(target)
+        except Exception as e:
+            logger.error(f"خطأ في حل الهدف: {target} - {e}")
+            return None
+
+    async def report_peer(self, chat_id, reason, message=""):
+        # إرسال بلاغ على مستخدم/قناة/مجموعة
+        try:
+            return await self.client.invoke(
+                td_functions.reportChat(
+                    chat_id=chat_id,
+                    reason=reason,
+                    text=message
+                )
+            )
+        except Exception as e:
+            logger.error(f"خطأ في report_peer: {e}")
+            return None
+
+    async def report_message(self, chat_id, message_ids, reason, message=""):
+        # إرسال بلاغ على رسالة أو عدة رسائل
+        try:
+            return await self.client.invoke(
+                td_functions.reportChatMessage(
+                    chat_id=chat_id,
+                    message_ids=message_ids,
+                    reason=reason,
+                    text=message
+                )
+            )
+        except Exception as e:
+            logger.error(f"خطأ في report_message: {e}")
+            return None
+
     # يمكن إضافة المزيد من الدوال حسب الحاجة (إرسال تقارير، إلخ)
