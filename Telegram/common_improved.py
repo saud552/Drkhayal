@@ -119,14 +119,18 @@ class EnhancedProxyChecker:
             # التحقق من صحة السر
             secret = proxy_info["secret"]
             if isinstance(secret, str):
+                # طباعة معلومات تشخيصية
+                detailed_logger.info(f"🔍 فحص السر: نوع={type(secret)}, طول={len(secret)}, محتوى={secret[:20]}...")
+                
                 # يجب أن يكون السر سداسي عشري صالح
                 if len(secret) % 2 != 0:
                     detailed_logger.error(f"❌ طول السر غير صالح: {len(secret)}")
                     return False
                 try:
-                    bytes.fromhex(secret)
-                except ValueError:
-                    detailed_logger.error(f"❌ سر غير صالح (ليس سداسي عشري): {secret[:20]}...")
+                    test_bytes = bytes.fromhex(secret)
+                    detailed_logger.info(f"✅ السر صالح، تم تحويله إلى {len(test_bytes)} بايت")
+                except ValueError as e:
+                    detailed_logger.error(f"❌ سر غير صالح (ليس سداسي عشري): {secret[:20]}... - خطأ: {e}")
                     return False
             elif isinstance(secret, bytes):
                 # إذا كان bytes، فهو صالح
@@ -145,6 +149,8 @@ class EnhancedProxyChecker:
         """اختبار عميق للبروكسي مع فحوصات متعددة"""
         result = proxy_info.copy()
         client = None
+        
+        detailed_logger.info(f"🔍 بدء deep_proxy_test للبروكسي {proxy_info.get('server', 'مجهول')}")
         
         # التحقق من صحة البيانات أولاً
         if not self.validate_proxy_data(proxy_info):
@@ -168,20 +174,35 @@ class EnhancedProxyChecker:
                 "lang_code": "ar"
             }
             
-            # تحضير السر
+            # تحضير السر مع معالجة محسنة
             secret = proxy_info["secret"]
+            detailed_logger.info(f"🔍 تحضير السر: نوع={type(secret)}, طول={len(secret) if secret else 0}")
+            
             if isinstance(secret, str):
                 try:
+                    detailed_logger.info(f"🔍 محاولة fromhex على السر: {secret[:20]}...")
                     secret_bytes = bytes.fromhex(secret)
-                except ValueError:
-                    raise ProxyTestFailed(f"سر غير صالح: {secret}")
-            else:
+                    detailed_logger.info(f"✅ نجح fromhex، تم إنتاج {len(secret_bytes)} بايت")
+                except ValueError as e:
+                    # محاولة تشفير السر كـ UTF-8 إذا فشل fromhex
+                    detailed_logger.warning(f"⚠️ فشل fromhex ({e}), استخدام UTF-8 encoding للسر: {secret[:20]}...")
+                    secret_bytes = secret.encode('utf-8')
+            elif isinstance(secret, bytes):
+                detailed_logger.info(f"🔍 السر بالفعل bytes: {len(secret)} بايت")
                 secret_bytes = secret
+            else:
+                # إذا لم يكن string أو bytes، محاولة تحويله
+                try:
+                    detailed_logger.warning(f"⚠️ نوع سر غير متوقع: {type(secret)}, محاولة تحويل...")
+                    secret_bytes = bytes(secret)
+                except (TypeError, ValueError):
+                    raise ProxyTestFailed(f"نوع سر غير مدعوم: {type(secret)}")
                 
+            # telethon تتوقع السر كـ string وليس bytes
             params["proxy"] = (
                 proxy_info["server"],
                 proxy_info["port"],
-                secret_bytes
+                proxy_info["secret"]  # استخدام السر الأصلي كـ string
             )
             
             # اختبار الاتصال الأولي
@@ -261,6 +282,9 @@ class EnhancedProxyChecker:
             self.failed_proxies.add(proxy_info["server"])
             
         except Exception as e:
+            import traceback
+            detailed_logger.error(f"❌ خطأ عام في deep_proxy_test للبروكسي {proxy_info['server']}: {e}")
+            detailed_logger.error(f"📍 تتبع الخطأ الكامل:\n{traceback.format_exc()}")
             result.update({
                 "status": "error",
                 "ping": 0,
@@ -836,7 +860,7 @@ async def process_enhanced_session(session: dict, targets: list, reports_per_acc
                 
             params.update({
                 "connection": ConnectionTcpMTProxyRandomizedIntermediate,
-                "proxy": (current_proxy["server"], current_proxy["port"], secret_bytes)
+                "proxy": (current_proxy["server"], current_proxy["port"], current_proxy["secret"])
             })
         
         # الاتصال
