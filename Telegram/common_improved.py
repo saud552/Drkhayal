@@ -841,95 +841,154 @@ async def execute_simultaneous_mass_reporting(sessions: list, targets: list, con
     
     detailed_logger.info(f"🚀 بدء {total_cycles} دورة إبلاغ جماعي متزامن")
     
-    for cycle in range(total_cycles):
-        if not config.get("active", True):
-            break
+    try:
+        for cycle in range(total_cycles):
+            # فحص الإلغاء قبل بدء كل دورة
+            if not config.get("active", True):
+                detailed_logger.info(f"🛑 تم إلغاء العملية قبل الدورة {cycle + 1}")
+                break
+                
+            config["current_cycle"] = cycle + 1
+            cycle_start_time = time.time()
             
-        config["current_cycle"] = cycle + 1
-        cycle_start_time = time.time()
-        
-        detailed_logger.info(f"📊 بدء الدورة {cycle + 1}/{total_cycles}")
-        
-        # تحديث رسالة التقدم لعرض معلومات الدورة
-        await update_cycle_progress(config, progress_message, cycle + 1, "بدء الدورة...")
-        
-        # إنشاء جميع مهام الإبلاغ للدورة الحالية (جميع الحسابات × جميع المنشورات)
-        cycle_tasks = []
-        
-        for session in sessions:
-            for target in targets:
+            detailed_logger.info(f"📊 بدء الدورة {cycle + 1}/{total_cycles}")
+            
+            # تحديث رسالة التقدم لعرض معلومات الدورة
+            await update_cycle_progress(config, progress_message, cycle + 1, "بدء الدورة...")
+            
+            # إنشاء جميع مهام الإبلاغ للدورة الحالية (جميع الحسابات × جميع المنشورات)
+            cycle_tasks = []
+            
+            for session in sessions:
+                for target in targets:
+                    # فحص الإلغاء أثناء إنشاء المهام
+                    if not config.get("active", True):
+                        detailed_logger.info(f"🛑 تم إلغاء العملية أثناء إنشاء مهام الدورة {cycle + 1}")
+                        break
+                        
+                    # إنشاء مهمة إبلاغ واحدة لكل (حساب، منشور)
+                    task = asyncio.create_task(
+                        execute_single_report_task(session, target, config, context)
+                    )
+                    cycle_tasks.append(task)
+                
+                # فحص الإلغاء بين الجلسات
                 if not config.get("active", True):
                     break
-                    
-                # إنشاء مهمة إبلاغ واحدة لكل (حساب، منشور)
-                task = asyncio.create_task(
-                    execute_single_report_task(session, target, config, context)
-                )
-                cycle_tasks.append(task)
-        
-        if not cycle_tasks:
-            break
             
-        detailed_logger.info(f"⚡ تنفيذ {len(cycle_tasks)} مهمة إبلاغ متزامنة في الدورة {cycle + 1}")
-        
-        # تحديث رسالة التقدم
-        await update_cycle_progress(config, progress_message, cycle + 1, f"تنفيذ {len(cycle_tasks)} إبلاغ متزامن...")
-        
-        # تنفيذ جميع المهام بشكل متزامن
-        cycle_results = await asyncio.gather(*cycle_tasks, return_exceptions=True)
-        
-        # تحليل نتائج الدورة
-        cycle_success = 0
-        cycle_failed = 0
-        
-        for result in cycle_results:
-            if isinstance(result, Exception):
-                cycle_failed += 1
-                detailed_logger.error(f"❌ مهمة فاشلة في الدورة {cycle + 1}: {result}")
-            elif isinstance(result, dict) and result.get("success"):
-                cycle_success += result.get("verified_reports", 0)
-            else:
-                cycle_failed += 1
-        
-        # تحديث الإحصائيات
-        async with config["lock"]:
-            config["progress_success"] += cycle_success
-            config["progress_confirmed"] += cycle_success
-            config["progress_failed"] += cycle_failed
+            # إذا تم الإلغاء، ألغي جميع المهام المعلقة
+            if not config.get("active", True):
+                detailed_logger.info(f"🛑 إلغاء {len(cycle_tasks)} مهمة معلقة...")
+                for task in cycle_tasks:
+                    if not task.done():
+                        task.cancel()
+                        
+                # انتظار قصير للسماح للمهام بالإلغاء
+                try:
+                    await asyncio.wait_for(
+                        asyncio.gather(*cycle_tasks, return_exceptions=True), 
+                        timeout=2.0
+                    )
+                except asyncio.TimeoutError:
+                    detailed_logger.warning("⚠️ بعض المهام لم تُلغى في الوقت المحدد")
+                break
             
-            # إضافة إحصائيات الدورة
-            cycle_stats = {
-                "cycle": cycle + 1,
-                "success": cycle_success,
-                "failed": cycle_failed,
-                "duration": time.time() - cycle_start_time,
-                "timestamp": time.time()
-            }
-            config["detailed_stats"]["cycle_stats"].append(cycle_stats)
-        
-        cycle_duration = time.time() - cycle_start_time
-        detailed_logger.info(f"✅ اكتملت الدورة {cycle + 1}/{total_cycles} - نجح: {cycle_success}, فشل: {cycle_failed}, المدة: {cycle_duration:.1f}ث")
-        
-        # تحديث رسالة التقدم بنتائج الدورة
-        await update_cycle_progress(config, progress_message, cycle + 1, 
-                                  f"نجح: {cycle_success}, فشل: {cycle_failed}")
-        
-        # انتظار قبل الدورة التالية (إلا إذا كانت آخر دورة)
-        if cycle < total_cycles - 1 and config.get("active", True):
-            detailed_logger.info(f"⏳ انتظار {cycle_delay} ثانية قبل الدورة التالية...")
+            if not cycle_tasks:
+                detailed_logger.warning(f"⚠️ لا توجد مهام لتنفيذها في الدورة {cycle + 1}")
+                break
+                
+            detailed_logger.info(f"⚡ تنفيذ {len(cycle_tasks)} مهمة إبلاغ متزامنة في الدورة {cycle + 1}")
+            
+            # تحديث رسالة التقدم
+            await update_cycle_progress(config, progress_message, cycle + 1, f"تنفيذ {len(cycle_tasks)} إبلاغ متزامن...")
+            
+            # تنفيذ جميع المهام بشكل متزامن مع إمكانية الإلغاء
+            try:
+                cycle_results = await asyncio.gather(*cycle_tasks, return_exceptions=True)
+            except asyncio.CancelledError:
+                detailed_logger.info(f"🛑 تم إلغاء مهام الدورة {cycle + 1}")
+                break
+            
+            # فحص الإلغاء بعد اكتمال المهام
+            if not config.get("active", True):
+                detailed_logger.info(f"🛑 تم إلغاء العملية بعد اكتمال الدورة {cycle + 1}")
+                break
+            
+            # تحليل نتائج الدورة
+            cycle_success = 0
+            cycle_failed = 0
+            
+            for result in cycle_results:
+                if isinstance(result, Exception):
+                    cycle_failed += 1
+                    if not isinstance(result, asyncio.CancelledError):
+                        detailed_logger.error(f"❌ مهمة فاشلة في الدورة {cycle + 1}: {result}")
+                elif isinstance(result, dict) and result.get("success"):
+                    cycle_success += result.get("verified_reports", 0)
+                else:
+                    cycle_failed += 1
+            
+            # تحديث الإحصائيات
+            async with config["lock"]:
+                config["progress_success"] += cycle_success
+                config["progress_confirmed"] += cycle_success
+                config["progress_failed"] += cycle_failed
+                
+                # إضافة إحصائيات الدورة
+                cycle_stats = {
+                    "cycle": cycle + 1,
+                    "success": cycle_success,
+                    "failed": cycle_failed,
+                    "duration": time.time() - cycle_start_time,
+                    "timestamp": time.time(),
+                    "cancelled": not config.get("active", True)
+                }
+                config["detailed_stats"]["cycle_stats"].append(cycle_stats)
+            
+            cycle_duration = time.time() - cycle_start_time
+            detailed_logger.info(f"✅ اكتملت الدورة {cycle + 1}/{total_cycles} - نجح: {cycle_success}, فشل: {cycle_failed}, المدة: {cycle_duration:.1f}ث")
+            
+            # تحديث رسالة التقدم بنتائج الدورة
             await update_cycle_progress(config, progress_message, cycle + 1, 
-                                      f"انتظار {cycle_delay}ث قبل الدورة التالية...")
-            await asyncio.sleep(cycle_delay)
+                                      f"نجح: {cycle_success}, فشل: {cycle_failed}")
+            
+            # انتظار قبل الدورة التالية (إلا إذا كانت آخر دورة أو تم الإلغاء)
+            if cycle < total_cycles - 1 and config.get("active", True):
+                detailed_logger.info(f"⏳ انتظار {cycle_delay} ثانية قبل الدورة التالية...")
+                await update_cycle_progress(config, progress_message, cycle + 1, 
+                                          f"انتظار {cycle_delay}ث قبل الدورة التالية...")
+                
+                # انتظار مع فحص الإلغاء كل ثانية
+                for wait_second in range(cycle_delay):
+                    if not config.get("active", True):
+                        detailed_logger.info(f"🛑 تم إلغاء العملية أثناء الانتظار (ثانية {wait_second + 1}/{cycle_delay})")
+                        break
+                    await asyncio.sleep(1)
+                
+                # إذا تم الإلغاء أثناء الانتظار
+                if not config.get("active", True):
+                    break
     
-    # عرض النتائج النهائية
-    await display_final_mass_report_results(config, progress_message)
+    except asyncio.CancelledError:
+        detailed_logger.info("🛑 تم إلغاء عملية الإبلاغ الجماعي")
+        config["active"] = False
+    except Exception as e:
+        detailed_logger.error(f"❌ خطأ في عملية الإبلاغ الجماعي: {e}")
+        config["active"] = False
+    finally:
+        # عرض النتائج النهائية (سواء اكتملت أو تم إلغاؤها)
+        await display_final_mass_report_results(config, progress_message)
 
 async def execute_single_report_task(session: dict, target: any, config: dict, 
                                    context: ContextTypes.DEFAULT_TYPE) -> dict:
-    """تنفيذ مهمة إبلاغ واحدة (حساب واحد، منشور واحد)"""
+    """تنفيذ مهمة إبلاغ واحدة (حساب واحد، منشور واحد) - مع دعم الإلغاء"""
     session_id = session.get("id", "unknown")
     session_str = session.get("session")
     proxies = config.get("proxies", [])
+    
+    # فحص الإلغاء في بداية المهمة
+    if not config.get("active", True):
+        return {"success": False, "error": "تم إلغاء العملية", "cancelled": True}
     
     if not session_str:
         return {"success": False, "error": f"جلسة فارغة للحساب {session_id}"}
@@ -938,6 +997,10 @@ async def execute_single_report_task(session: dict, target: any, config: dict,
     current_proxy = None
     
     try:
+        # فحص الإلغاء قبل بدء الاتصال
+        if not config.get("active", True):
+            return {"success": False, "error": "تم إلغاء العملية قبل الاتصال", "cancelled": True}
+        
         # اختيار بروكسي عشوائي
         if proxies:
             current_proxy = random.choice(proxies)
@@ -958,15 +1021,29 @@ async def execute_single_report_task(session: dict, target: any, config: dict,
                 "proxy": (current_proxy["server"], current_proxy["port"], current_proxy["secret"])
             })
         
-        # الاتصال
+        # الاتصال مع فحص الإلغاء
         client = TelegramClient(StringSession(session_str), **params)
-        await client.connect()
+        
+        # اتصال مع timeout قصير لسرعة الاستجابة للإلغاء
+        connect_task = asyncio.create_task(client.connect())
+        try:
+            await asyncio.wait_for(connect_task, timeout=15)
+        except asyncio.TimeoutError:
+            return {"success": False, "error": f"انتهت مهلة الاتصال للحساب {session_id}"}
+        
+        # فحص الإلغاء بعد الاتصال
+        if not config.get("active", True):
+            return {"success": False, "error": "تم إلغاء العملية بعد الاتصال", "cancelled": True}
         
         if not await client.is_user_authorized():
             return {"success": False, "error": f"الجلسة {session_id} غير مفوضة"}
         
         # إنشاء مبلغ محقق
         reporter = VerifiedReporter(client, context)
+        
+        # فحص الإلغاء قبل تنفيذ البلاغ
+        if not config.get("active", True):
+            return {"success": False, "error": "تم إلغاء العملية قبل الإبلاغ", "cancelled": True}
         
         # تنفيذ بلاغ واحد فقط لهذا الهدف
         result = await reporter.execute_verified_report(
@@ -978,15 +1055,25 @@ async def execute_single_report_task(session: dict, target: any, config: dict,
             cycle_delay=0     # لا حاجة للتأخير داخل المهمة الواحدة
         )
         
+        # فحص الإلغاء بعد البلاغ
+        if not config.get("active", True):
+            result["cancelled"] = True
+        
         return result
         
+    except asyncio.CancelledError:
+        detailed_logger.info(f"🛑 تم إلغاء مهمة الحساب {session_id}")
+        return {"success": False, "error": "تم إلغاء المهمة", "cancelled": True}
     except Exception as e:
         detailed_logger.error(f"❌ فشل مهمة الحساب {session_id} للهدف {target}: {e}")
         return {"success": False, "error": str(e)}
     
     finally:
         if client and client.is_connected():
-            await client.disconnect()
+            try:
+                await client.disconnect()
+            except Exception as e:
+                detailed_logger.warning(f"⚠️ خطأ في قطع الاتصال للحساب {session_id}: {e}")
 
 async def update_cycle_progress(config: dict, progress_message: Any, current_cycle: int, status: str):
     """تحديث رسالة التقدم مع معلومات الدورة"""
