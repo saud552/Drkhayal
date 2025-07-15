@@ -1,10 +1,11 @@
-# DrKhayal/Email/Email_reports.py
+# DrKhayal/Email/email_reports.py
 
 import os
 import json
 import logging
 import re
 import smtplib
+import traceback
 from threading import Thread, Lock
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -28,6 +29,9 @@ except ImportError:
     logging.error("خطأ: لا يمكن استيراد OWNER_ID من config.py.")
     # استخدام قيمة افتراضية لتجنب التعطل، لكن يجب إصلاح الاستيراد
     OWNER_ID = 0
+
+# إعداد بريد المالك للاختبار
+OWNER_EMAIL = "test@example.com"  # يجب تحديث هذا ببريد المالك الفعلي
 
 # --- تعريف الثوابت والمتغيرات الخاصة بوحدة الإيميل ---
 logger = logging.getLogger(__name__)
@@ -71,6 +75,14 @@ DELETE_EMAIL = 9
 # زر الرجوع العام
 BACK_BUTTON = InlineKeyboardButton('رجوع', callback_data='back')
 
+# دالة للاستجابة للمستخدمين غير المصرح لهم
+async def unauthorized_response(message, is_callback=False):
+    text = "❌ ليس مصرحاً لك باستخدام هذا الأمر."
+    if is_callback:
+        await message.reply_text(text)
+    else:
+        await message.reply_text(text)
+
 
 # -------------- Helpers --------------
 def load_email_accounts():
@@ -91,10 +103,6 @@ def save_email_accounts(accounts):
         raise
 
 # -------------- SMTP Client --------------
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-from email.mime.base import MIMEBase
-from email import encoders
 
 class SMTPClient:
     def __init__(self, email, password, targets, count, subject, body, attachments, delay):
@@ -502,6 +510,8 @@ async def next_step_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return GET_DELAY
 
 async def get_delay(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.text.strip() == 'رجوع':
+        return await cancel(update, context)
     try:
         d = float(update.message.text)
     except ValueError:
@@ -648,40 +658,63 @@ async def handle_test_email_selection(update: Update, context: ContextTypes.DEFA
 # --- تجميع كل المعالجات في ConversationHandler واحد ---
 email_conv_handler = ConversationHandler(
     entry_points=[
-        CallbackQueryHandler(back_to_email_menu, pattern='^main_email$')
+        CallbackQueryHandler(start_email, pattern='^email_reports$'),
+        CallbackQueryHandler(manage_emails, pattern='^manage_emails$'),
+        CallbackQueryHandler(external_upload_callback, pattern='^external_upload$')
     ],
     states={
-        EMAIL_MENU: [
-            CallbackQueryHandler(manage_emails_menu, pattern='^email_manage$'),
-            CallbackQueryHandler(start_campaign_flow, pattern='^email_start_campaign$'),
+        GET_NUMBER: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, get_number),
+            CallbackQueryHandler(back_callback, pattern='^back$')
         ],
-        # حالات إدارة الحسابات
-        MANAGE_MENU: [
-            CallbackQueryHandler(ask_add_emails, pattern='^add_emails$'),
-            CallbackQuery_handler(ask_delete_email, pattern='^delete_email$'),
-            CallbackQueryHandler(show_emails_list, pattern='^show_emails$'),
-            CallbackQueryHandler(back_to_email_menu, pattern='^back_to_email_menu$'),
+        GET_EMAILS: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, get_emails),
+            CallbackQueryHandler(back_callback, pattern='^back$')
         ],
-        PROCESS_ADD_EMAILS: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_add_emails_input)],
-        PROCESS_DELETE_EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_delete_email_input)],
-        
-        # حالات بدء حملة
-        GET_NUMBER: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_number_input)],
-        GET_EMAILS: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_emails_input)],
-        GET_SUBJECT: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_subject_input)],
-        GET_BODY: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_body_input)],
+        GET_SUBJECT: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, get_subject),
+            CallbackQueryHandler(back_callback, pattern='^back$')
+        ],
+        GET_BODY: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, get_body),
+            CallbackQueryHandler(back_callback, pattern='^back$')
+        ],
         GET_ATTACHMENTS: [
-            MessageHandler(filters.Document.ALL | filters.PHOTO, get_attachments_input),
-            CallbackQueryHandler(ask_delay, pattern='^skip_attachments$'),
+            MessageHandler(filters.Document.ALL | filters.PHOTO, get_attachments),
+            CallbackQueryHandler(next_step_callback, pattern='^next$'),
+            CallbackQueryHandler(back_callback, pattern='^back$')
         ],
-        GET_DELAY: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_delay_input)],
-        CONFIRM: [CallbackQueryHandler(confirm_and_send, pattern='^confirm_send$')],
+        GET_DELAY: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, get_delay),
+            CallbackQueryHandler(back_callback, pattern='^back$')
+        ],
+        CONFIRM: [
+            CallbackQueryHandler(confirm_send_callback, pattern='^send$'),
+            CallbackQueryHandler(back_callback, pattern='^back$')
+        ],
+        ADD_EMAILS: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, process_add_emails),
+            CallbackQueryHandler(back_callback, pattern='^back$')
+        ],
+        DELETE_EMAIL: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, process_delete_email),
+            CallbackQueryHandler(back_callback, pattern='^back$')
+        ],
     },
     fallbacks=[
-        CallbackQueryHandler(back_to_email_menu, pattern='^back_to_email_menu$'),
-        CallbackQueryHandler(lambda u,c: u.callback_query.edit_message_text("تم الإلغاء."), pattern='^cancel$'),
+        CallbackQueryHandler(cancel, pattern='^cancel$'),
+        CallbackQueryHandler(back_callback, pattern='^back$'),
+        MessageHandler(filters.TEXT & filters.Regex('^رجوع$'), cancel),
     ],
     per_user=True,
-    # نقطة الدخول الرئيسية للبوت هي التي ستوجه المستخدم إلى هنا
-    # لذلك لا نحتاج لدالة تسجيل منفصلة
 )
+
+# إضافة معالج للـ callbacks الإضافية
+additional_callbacks = [
+    CallbackQueryHandler(manage_emails, pattern='^manage_emails$'),
+    CallbackQueryHandler(add_emails_callback, pattern='^add_emails$'),
+    CallbackQueryHandler(delete_email_callback, pattern='^delete_email$'),
+    CallbackQueryHandler(show_emails_callback, pattern='^show_emails$'),
+    CallbackQueryHandler(external_upload_callback, pattern='^external_upload$'),
+    CallbackQueryHandler(handle_test_email_selection, pattern='^test_email_'),
+]
