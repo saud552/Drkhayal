@@ -42,10 +42,15 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # === إعدادات التطبيق ===
-API_ID = int(os.getenv('TG_API_ID', '26924046'))
-API_HASH = os.getenv('TG_API_HASH', '4c6ef4cee5e129b7a674de156e2bcc15')
-BOT_TOKEN = os.getenv('BOT_TOKEN', '7618405088:AAEikRuG-UXaLYqcrqGjgxf5k4V23U9kcAA')
-DB_PATH = 'accounts.db'
+# استيراد إعدادات من ملف config.py
+try:
+    from config import API_ID, API_HASH, BOT_TOKEN, DB_PATH
+except ImportError:
+    # استخدام متغيرات البيئة كبديل
+    API_ID = int(os.getenv('TG_API_ID', '26924046'))
+    API_HASH = os.getenv('TG_API_HASH', '4c6ef4cee5e129b7a674de156e2bcc15')
+    BOT_TOKEN = os.getenv('BOT_TOKEN', '7618405088:AAEikRuG-UXaLYqcrqGjgxf5k4V23U9kcAA')
+    DB_PATH = 'accounts.db'
 ADMIN_IDS = [int(x) for x in os.getenv('ADMIN_IDS', '985612253').split(',') if x]
 SESSION_TIMEOUT = 60  # ثانية
 VIEW_PAGE_SIZE = 50  # عدد الحسابات في صفحة العرض
