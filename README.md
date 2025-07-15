@@ -17,22 +17,39 @@
 
 ## الإعداد
 
-1. انسخ ملف `.env.example` إلى `.env` واملأ القيم الصحيحة:
+### الطريقة السريعة (مستحسنة):
+```bash
+python3 setup.py
+```
+
+### الإعداد اليدوي:
+
+1. تثبيت المتطلبات:
+   ```bash
+   pip3 install python-telegram-bot telethon cryptography requests aiofiles
+   ```
+
+2. انسخ ملف `.env.example` إلى `.env` واملأ القيم الصحيحة:
    ```bash
    cp .env.example .env
    ```
 
-2. قم بتحرير ملف `.env` وأضف بياناتك الصحيحة.
-
-3. قم بتثبيت المتطلبات:
-   ```bash
-   pip install -r requirements.txt
-   ```
+3. قم بتحرير ملف `.env` وأضف بياناتك الصحيحة.
 
 4. تشغيل البوت:
    ```bash
-   python khayal.py
+   python3 khayal.py
    ```
+
+## حل المشاكل الشائعة
+
+### خطأ "No module named 'telegram'":
+```bash
+pip3 install python-telegram-bot telethon
+```
+
+### خطأ الإزاحة (IndentationError):
+تأكد من أن جميع ملفات Python تستخدم مسافات (spaces) وليس tabs للإزاحة.
 
 ## الأمان
 
