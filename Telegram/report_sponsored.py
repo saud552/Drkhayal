@@ -11,6 +11,7 @@ from telegram.ext import (
 )
 
 from .common import run_report_process, cancel_operation
+from .common_improved import run_enhanced_report_process
 
 # States
 (
@@ -223,7 +224,7 @@ async def confirm_and_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     context.user_data["progress_message"] = msg
     
-    asyncio.create_task(run_report_process(update, context))
+            asyncio.create_task(run_enhanced_report_process(update, context))
     return CONFIRM_START
 
 
