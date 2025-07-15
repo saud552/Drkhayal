@@ -1,7 +1,7 @@
 import asyncio
 import os
 import logging
-from pytdlib import AsyncTelethonClient
+from pytdlib import AsyncTDLibClient
 from pytdlib.api import functions as td_functions
 from pytdlib.api import types as td_types
 
@@ -19,7 +19,7 @@ class TDLibClient:
         os.makedirs(self.session_dir, exist_ok=True)
 
     async def start(self):
-        self.client = AsyncTelethonClient(
+        self.client = AsyncTDLibClient(
             api_id=self.api_id,
             api_hash=self.api_hash,
             phone=self.phone,
