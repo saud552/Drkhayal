@@ -28,7 +28,11 @@ from config import API_ID, API_HASH
 from add import safe_db_query
 
 logger = logging.getLogger(__name__)
-DB_PATH = 'accounts.db'
+# استيراد DB_PATH من config.py
+try:
+    from config import DB_PATH
+except ImportError:
+    DB_PATH = 'accounts.db'  # قيمة افتراضية
 
 # استثناءات مخصصة
 class TemporaryFailure(Exception):
