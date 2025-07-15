@@ -128,14 +128,6 @@ def init_db():
         )
         
         conn.commit()
-        
-        # التأكد من وجود فئة "حسابات التخزين"
-        conn.execute(
-            "INSERT OR IGNORE INTO categories (id, name, is_active) VALUES (?, ?, ?)",
-            (str(uuid.uuid4()), "حسابات التخزين", 1)
-        )
-        
-        conn.commit()
 
 init_db()
 # ===== إضافة دالة مساعدة لاستعلامات قاعدة البيانات الآمنة =====
@@ -408,7 +400,7 @@ async def add_account_session(update: Update, context: ContextTypes.DEFAULT_TYPE
         client = TDLibClient(
             API_ID,
             API_HASH,
-            session_str,
+            session_str,  # استخدام session_str كـ phone number
             session_dir='tdlib_sessions',
         )
         await client.start()
@@ -418,8 +410,8 @@ async def add_account_session(update: Update, context: ContextTypes.DEFAULT_TYPE
             raise ValueError("الجلسة غير صالحة")
         
         context.user_data['session_str'] = session_str
-        context.user_data['phone'] = me.phone
-        context.user_data['username'] = me.username
+        context.user_data['phone'] = me.get('phone_number', session_str)
+        context.user_data['username'] = me.get('username', None)
         
         await update.message.reply_text(
             "📁 الرجاء إدخال اسم الفئة التي تريد تخزين الحساب فيها:"
@@ -1074,15 +1066,13 @@ async def check_next_account(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     # فحص الحساب
     try:
-        async with TDLibClient(
-            session_str,
+        client = TDLibClient(
             API_ID,
             API_HASH,
-            device_model=device_info.get('device_model', 'Unknown'),
-            system_version=device_info.get('system_version', 'Unknown'),
-            timeout=SESSION_TIMEOUT
-        ) as client:
-            await client.connect()
+            session_str,
+            session_dir='tdlib_sessions'
+        )
+        await client.start()
             
             # الحصول على معلومات الحساب
             me = await client.get_me()
@@ -1111,8 +1101,8 @@ async def check_next_account(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 'status': status,
                 'status_text': status_text,
                 'restrictions': restrictions,
-                'username': me.username if me else None,
-                'user_id': me.id if me else None,
+                'username': me.get('username') if me else None,
+                'user_id': me.get('id') if me else None,
                 'error': None
             })
             
@@ -1263,15 +1253,13 @@ async def recheck_account(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     
     # إعادة الفحص
     try:
-        async with TDLibClient(
-            session_str,
+        client = TDLibClient(
             API_ID,
             API_HASH,
-            device_model=device_info.get('device_model', 'Unknown'),
-            system_version=device_info.get('system_version', 'Unknown'),
-            timeout=SESSION_TIMEOUT
-        ) as client:
-            await client.connect()
+            session_str,
+            session_dir='tdlib_sessions'
+        )
+        await client.start()
             
             # الحصول على معلومات الحساب
             me = await client.get_me()
@@ -1300,8 +1288,8 @@ async def recheck_account(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                         'status': status,
                         'status_text': status_text,
                         'restrictions': restrictions,
-                        'username': me.username if me else None,
-                        'user_id': me.id if me else None,
+                        'username': me.get('username') if me else None,
+                        'user_id': me.get('id') if me else None,
                         'error': None
                     })
                     break

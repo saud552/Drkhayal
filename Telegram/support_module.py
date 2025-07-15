@@ -146,15 +146,15 @@ async def select_support_type(update: Update, context: ContextTypes.DEFAULT_TYPE
     invalid_count = 0
 
     for account in all_accounts:
-        client = TDLibClient(account['phone'])
+        client = TDLibClient(API_ID, API_HASH, account['phone'])
         try:
-            await client.connect()
+            await client.start()
             await client.get_me()  # تفعيل الجلسة
             valid_sessions.append(account)
         except Exception as e:
             invalid_count += 1
         finally:
-            await client.disconnect()
+            await client.stop()
 
     # 5) إذا لم توجد جلسات صالحة، نعرض رسالة خطأ
     if not valid_sessions:

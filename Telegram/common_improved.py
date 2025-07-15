@@ -62,16 +62,17 @@ class RateLimitExceeded(Exception):
     pass
 
 # === أنواع البلاغات مع معرفات التأكيد ===
+# ملاحظة: تم إزالة types لأن TDLib يستخدم نظام مختلف للبلاغات
 REPORT_TYPES_ENHANCED = {
-    2: ("رسائل مزعجة", types.InputReportReasonSpam(), "spam"),
-    3: ("إساءة أطفال", types.InputReportReasonChildAbuse(), "child_abuse"),
-    4: ("محتوى جنسي", types.InputReportReasonPornography(), "pornography"),
-    5: ("عنف", types.InputReportReasonViolence(), "violence"),
-    6: ("انتهاك خصوصية", types.InputReportReasonPersonalDetails(), "privacy"),
-    7: ("مخدرات", types.InputReportReasonIllegalDrugs(), "drugs"),
-    8: ("حساب مزيف", types.InputReportReasonFake(), "fake"),
-    9: ("حقوق النشر", types.InputReportReasonCopyright(), "copyright"),
-    11: ("أخرى", types.InputReportReasonOther(), "other"),
+    2: ("رسائل مزعجة", "spam", "spam"),
+    3: ("إساءة أطفال", "child_abuse", "child_abuse"),
+    4: ("محتوى جنسي", "pornography", "pornography"),
+    5: ("عنف", "violence", "violence"),
+    6: ("انتهاك خصوصية", "privacy", "privacy"),
+    7: ("مخدرات", "drugs", "drugs"),
+    8: ("حساب مزيف", "fake", "fake"),
+    9: ("حقوق النشر", "copyright", "copyright"),
+    11: ("أخرى", "other", "other"),
 }
 
 class EnhancedProxyChecker:
@@ -153,7 +154,6 @@ class EnhancedProxyChecker:
                 "api_id": API_ID,
                 "api_hash": API_HASH,
                 "timeout": PROXY_CHECK_TIMEOUT,
-                "connection": ConnectionTcpMTProxyRandomizedIntermediate,
                 "device_model": "Proxy Test Bot",
                 "system_version": "1.0.0",
                 "app_version": "1.0.0",
@@ -184,19 +184,20 @@ class EnhancedProxyChecker:
                 except (TypeError, ValueError):
                     raise ProxyTestFailed(f"نوع سر غير مدعوم: {type(secret)}")
                 
-            # telethon تتوقع السر كـ string وليس bytes
-            params["proxy"] = (
-                proxy_info["server"],
-                proxy_info["port"],
-                proxy_info["secret"]  # استخدام السر الأصلي كـ string
-            )
+            # TDLib يتوقع إعدادات البروكسي كـ dict
+            proxy_config = {
+                "@type": "proxyTypeMtproto",
+                "server": proxy_info["server"],
+                "port": proxy_info["port"],
+                "secret": proxy_info["secret"]
+            }
             
             # اختبار الاتصال الأولي
             start_time = time.time()
-            client = TDLibClient(session_str)
+            client = TDLibClient(API_ID, API_HASH, session_str, proxy=proxy_config)
             
             # اختبار الاتصال مع timeout
-            await asyncio.wait_for(client.connect(), timeout=PROXY_CHECK_TIMEOUT)
+            await asyncio.wait_for(client.start(), timeout=PROXY_CHECK_TIMEOUT)
             connection_time = time.time() - start_time
             
             # التحقق من التفويض
@@ -283,9 +284,9 @@ class EnhancedProxyChecker:
             logger.error(f"خطأ في فحص البروكسي {proxy_info['server']}: {e}")
             
         finally:
-            if client and client.is_connected():
+            if client:
                 try:
-                    await client.disconnect()
+                    await client.stop()
                 except:
                     pass
                     
@@ -356,15 +357,7 @@ class VerifiedReporter:
         """التحقق من نجاح البلاغ الفعلي"""
         try:
             # تحليل نتيجة البلاغ
-            if isinstance(report_result, types.ReportResultAddComment):
-                detailed_logger.info(f"✅ تم قبول البلاغ مع طلب تعليق - الهدف: {target}")
-                return True
-                
-            elif isinstance(report_result, types.ReportResultChooseOption):
-                detailed_logger.info(f"✅ تم قبول البلاغ مع خيارات - الهدف: {target}")
-                return True
-                
-            elif hasattr(report_result, 'success') and report_result.success:
+            if hasattr(report_result, 'success') and report_result.success:
                 detailed_logger.info(f"✅ تم قبول البلاغ بنجاح - الهدف: {target}")
                 return True
                 
