@@ -40,15 +40,37 @@ class PermanentFailure(Exception):
     
 # --- الثوابت المشتركة ---
 REPORT_TYPES = {
-    2: ("رسائل مزعجة", types.InputReportReasonSpam()),
-    3: ("إساءة أطفال", types.InputReportReasonChildAbuse()),
-    4: ("محتوى جنسي", types.InputReportReasonPornography()),
-    5: ("عنف", types.InputReportReasonViolence()),
-    6: ("انتهاك خصوصية", types.InputReportReasonPersonalDetails()),
-    7: ("مخدرات", types.InputReportReasonIllegalDrugs()),
-    8: ("حساب مزيف", types.InputReportReasonFake()),
-    9: ("حقوق النشر", types.InputReportReasonCopyright()),
-    11: ("أخرى", types.InputReportReasonOther()),
+    1: {"label": "لم تعجبني", "subtypes": []},
+    2: {"label": "إساءة للأطفال", "subtypes": []},
+    3: {"label": "عنف", "subtypes": []},
+    4: {"label": "بضائع غير قانونية", "subtypes": [
+        "أسلحة",
+        "مخدرات",
+        "وثائق مزوّرة",
+        "أموال مزيفة",
+        "بضائع أخرى"
+    ]},
+    5: {"label": "محتوى غير قانوني للبالغين", "subtypes": [
+        "إساءة للأطفال",
+        "التحرش والإيحاءات الجنسية",
+        "محتوى جنسي غير قانوني آخر"
+    ]},
+    6: {"label": "معلومات شخصية", "subtypes": [
+        "صور خاصة",
+        "أرقام هواتف",
+        "عناوين",
+        "معلومات شخصية أخرى"
+    ]},
+    7: {"label": "إرهاب", "subtypes": []},
+    8: {"label": "احتيال أو إزعاج", "subtypes": [
+        "تصيّد",
+        "انتحال الشخصية",
+        "مبيعات احتيالية",
+        "إزعاج"
+    ]},
+    9: {"label": "حقوق النشر", "subtypes": []},
+    10: {"label": "أخرى", "subtypes": []},
+    11: {"label": "ليست (غير قانونية)، ولكن يجب إزالتها.", "subtypes": []},
 }
 
 # --- دوال مساعدة مشتركة محسنة ---
@@ -366,7 +388,7 @@ class AdvancedReporter:
         # استخدم دالة tdlib_client مباشرة
         return await self.client.resolve_target(target)
 
-    async def execute_report(self, target, reason_obj, method_type, message, reports_per_account, cycle_delay):
+    async def execute_report(self, target, reason_obj, method_type, message, reports_per_account, cycle_delay, subtype_label=None):
         target_obj = await self.resolve_target(target)
         if not target_obj:
             self.stats["failed"] += reports_per_account
@@ -378,22 +400,29 @@ class AdvancedReporter:
             try:
                 await self.dynamic_delay(cycle_delay)
 
+                # دمج subtype_label مع نص البلاغ إذا كان موجودًا
+                full_message = message
+                if subtype_label:
+                    if full_message:
+                        full_message = f"[{subtype_label}] {full_message}"
+                    else:
+                        full_message = subtype_label
+
                 if method_type == "peer":
                     await self.client.report_peer(
                         chat_id=target_obj.id,
                         reason=reason_obj,
-                        message=message
+                        message=full_message
                     )
                     self.stats["success"] += 1
                     logger.info(f"✅ تم الإبلاغ بنجاح على {target}")
 
                 elif method_type == "message":
-                    # target_obj يجب أن يحتوي على chat_id و message_id
                     await self.client.report_message(
                         chat_id=target_obj["channel"].id if isinstance(target_obj, dict) else target_obj.id,
                         message_ids=[target_obj["message_id"]] if isinstance(target_obj, dict) else [],
                         reason=reason_obj,
-                        message=message
+                        message=full_message
                     )
                     self.stats["success"] += 1
                     logger.info(f"✅ تم الإبلاغ بنجاح على الرسالة {target}")
@@ -404,7 +433,7 @@ class AdvancedReporter:
 
         return True
 
-    async def execute_mass_report(self, targets, reason_obj, message):
+    async def execute_mass_report(self, targets, reason_obj, message, subtype_label=None):
         if not targets:
             return
         try:
@@ -412,11 +441,17 @@ class AdvancedReporter:
             entity = await self.client.resolve_target(channel_username)
             chat_id = entity.id
             message_ids = [t["message_id"] for t in targets]
+            full_message = message
+            if subtype_label:
+                if full_message:
+                    full_message = f"[{subtype_label}] {full_message}"
+                else:
+                    full_message = subtype_label
             await self.client.report_message(
                 chat_id=chat_id,
                 message_ids=message_ids,
                 reason=reason_obj,
-                message=message
+                message=full_message
             )
             count = len(message_ids)
             self.stats["success"] += count
@@ -448,7 +483,7 @@ async def do_session_report(session_data: dict, config: dict, context: ContextTy
             reports_per_account = config.get("reports_per_account", 1)
             cycle_delay = config.get("cycle_delay", 1)
             if method_type == "mass":
-                await reporter.execute_mass_report(targets_list, config["reason_obj"], config.get("message", ""))
+                await reporter.execute_mass_report(targets_list, config["reason_obj"], config.get("message", ""), config.get("subtype_label"))
             else:
                 for _ in range(reports_per_account):
                     if not context.user_data.get("active", True): 
@@ -458,7 +493,8 @@ async def do_session_report(session_data: dict, config: dict, context: ContextTy
                             break
                         await reporter.execute_report(
                             target, config["reason_obj"], method_type,
-                            config.get("message", ""), 1, cycle_delay
+                            config.get("message", ""), 1, cycle_delay,
+                            config.get("subtype_label")
                         )
             lock = context.bot_data.setdefault('progress_lock', asyncio.Lock())
             async with lock:
@@ -707,7 +743,8 @@ async def process_single_account(session, targets, reports_per_account, config, 
                         "method_type": config["method_type"],
                         "message": config.get("message", ""),
                         "cycle_delay": config.get("cycle_delay", 1),
-                        "proxies": config.get("proxies", [])
+                        "proxies": config.get("proxies", []),
+                        "subtype_label": config.get("subtype_label")
                     }, context)
                     
                     account_success += 1

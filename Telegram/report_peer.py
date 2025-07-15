@@ -28,9 +28,8 @@ async def start_peer_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     context.user_data["method_type"] = "peer"
 
-    keyboard = [[InlineKeyboardButton(r[0], callback_data=f"reason_{k}")] for k, r in REPORT_TYPES.items()]
+    keyboard = [[InlineKeyboardButton(r["label"], callback_data=f"reason_{k}")] for k, r in REPORT_TYPES.items()]
     keyboard.append([InlineKeyboardButton("إلغاء ❌", callback_data="cancel")])
-    
     await query.edit_message_text(
         "👤 <b>طريقة الإبلاغ عن الحسابات/القنوات</b>\n\n"
         "اختر سبب الإبلاغ:",
@@ -43,8 +42,38 @@ async def select_reason(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     reason_num = int(query.data.split("_")[1])
-    context.user_data["reason_obj"] = REPORT_TYPES[reason_num][1]
-    
+    reason_obj = REPORT_TYPES[reason_num]
+    context.user_data["reason_num"] = reason_num
+    context.user_data["reason_label"] = reason_obj["label"]
+    if reason_obj["subtypes"]:
+        # عرض قائمة الفروع
+        keyboard = [[InlineKeyboardButton(sub, callback_data=f"subtype_{i}")] for i, sub in enumerate(reason_obj["subtypes"])]
+        keyboard.append([InlineKeyboardButton("إلغاء ❌", callback_data="cancel")])
+        await query.edit_message_text(
+            f"🔎 <b>اختر نوع البلاغ الفرعي:</b>",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return "SELECT_SUBTYPE"
+    else:
+        context.user_data["subtype_label"] = None
+        await query.edit_message_text(
+            "🎯 <b>إدخال الهدف</b>\n\n"
+            "أرسل يوزر أو رابط الحساب/القناة المستهدفة:\n\n"
+            "📌 <i>أمثلة:</i>\n"
+            "@username\n"
+            "https://t.me/username",
+            parse_mode="HTML"
+        )
+        return ENTER_TARGET
+
+async def select_subtype(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    subtype_idx = int(query.data.split("_")[1])
+    reason_num = context.user_data["reason_num"]
+    subtype_label = REPORT_TYPES[reason_num]["subtypes"][subtype_idx]
+    context.user_data["subtype_label"] = subtype_label
     await query.edit_message_text(
         "🎯 <b>إدخال الهدف</b>\n\n"
         "أرسل يوزر أو رابط الحساب/القناة المستهدفة:\n\n"
@@ -214,6 +243,8 @@ async def confirm_and_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     context.user_data["active"] = True
+    # تمرير subtype_label إلى config
+    context.user_data["subtype_label"] = context.user_data.get("subtype_label")
     
     # حساب التكلفة التقديرية
     num_accounts = len(context.user_data["accounts"])
@@ -244,6 +275,7 @@ peer_report_conv = ConversationHandler(
     entry_points=[CallbackQueryHandler(start_peer_report, pattern='^method_peer$')],
     states={
         SELECT_REASON: [CallbackQueryHandler(select_reason, pattern='^reason_')],
+        "SELECT_SUBTYPE": [CallbackQueryHandler(select_subtype, pattern='^subtype_')],
         ENTER_TARGET: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_target)],
         ENTER_DETAILS: [MessageHandler(filters.TEXT | filters.COMMAND, process_details)],
         ENTER_REPORT_COUNT: [
