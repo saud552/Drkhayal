@@ -34,19 +34,20 @@ from telethon.network import ConnectionTcpMTProxyRandomizedIntermediate
 try:
     from config import BOT_TOKEN, OWNER_ID, DB_PATH, API_ID, API_HASH
 except ImportError:
-    logging.error("خطأ: لم يتم العثور على ملف config.py أو أنه ناقص. يجب أن يحتوي على: BOT_TOKEN, OWNER_ID, DB_PATH, API_ID, API_HASH")
+    print("خطأ: لم يتم العثور على ملف config.py أو أنه ناقص. يجب أن يحتوي على: BOT_TOKEN, OWNER_ID, DB_PATH, API_ID, API_HASH")
     exit(1)
+DB_PATH = 'accounts.db'
 # --- استيراد معالجات المحادثة من الوحدات المنفصلة ---
 try:
     from Email.Email_reports import email_conv_handler
 except ImportError:
-    logging.warning("تحذير: لم يتم العثور على وحدة البريد الإلكتروني. سيتم تجاهل هذا القسم.")
+    print("تحذير: لم يتم العثور على وحدة البريد الإلكتروني. سيتم تجاهل هذا القسم.")
     email_conv_handler = None
 
 try:
     from Telegram.support_module import register_support_handlers
 except ImportError:
-    logging.warning("تحذير: لم يتم العثور على وحدة الدعم الخاص (support_module.py). سيتم تجاهلها.")
+    print("تحذير: لم يتم العثور على وحدة الدعم الخاص (support_module.py). سيتم تجاهلها.")
     register_support_handlers = None
 
 from Telegram.report_peer import peer_report_conv

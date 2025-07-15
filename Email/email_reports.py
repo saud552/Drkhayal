@@ -25,7 +25,7 @@ from telegram.ext import (
 try:
     from config import OWNER_ID
 except ImportError:
-    logging.error("خطأ: لا يمكن استيراد OWNER_ID من config.py.")
+    print("خطأ: لا يمكن استيراد OWNER_ID من config.py.")
     # استخدام قيمة افتراضية لتجنب التعطل، لكن يجب إصلاح الاستيراد
     OWNER_ID = 0
 
