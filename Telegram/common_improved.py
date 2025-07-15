@@ -449,6 +449,28 @@ class VerifiedReporter:
         try:
             target_info = {"original": target, "resolved": None, "type": None}
             
+            # معالجة الأهداف من نوع القاموس (التي تأتي من parse_message_link)
+            if isinstance(target, dict) and 'channel' in target:
+                channel = target["channel"]
+                message_id = target["message_id"]
+                
+                try:
+                    # حل معرف القناة/المستخدم
+                    entity = await self.client.get_entity(channel)
+                    target_info.update({
+                        "resolved": {
+                            "channel": utils.get_input_peer(entity),
+                            "message_id": message_id
+                        },
+                        "type": "message",
+                        "channel_id": entity.id,
+                        "message_id": message_id
+                    })
+                    return target_info
+                except Exception as e:
+                    detailed_logger.error(f"❌ فشل في حل القناة {channel}: {e}")
+                    return None
+            
             if isinstance(target, str) and 't.me/' in target:
                 # تحليل رابط الرسالة
                 if '/c/' in target or re.search(r'/\d+$', target):
