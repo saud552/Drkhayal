@@ -362,39 +362,11 @@ class AdvancedReporter:
                 await asyncio.sleep(wait)
         self.stats["last_report"] = time.time()
 
-    async def resolve_target(self, target: str | dict):
-        """تحول الهدف (رابط، يوزر) إلى كائن يمكن استخدامه في تيليثون"""
-        try:
-            # إذا كان الرابط يحتوي على معرف رسالة
-            if isinstance(target, str) and 't.me/' in target:
-                parsed = parse_message_link(target)
-                if parsed:
-                    entity = await self.client.get_entity(parsed["channel"])
-                    return {
-                        "channel": utils.get_input_peer(entity),
-                        "message_id": parsed["message_id"]
-                    }
-            
-            # إذا كان الهدف معرف قناة/دردشة
-            if isinstance(target, str):
-                entity = await self.client.get_entity(target)
-                return utils.get_input_peer(entity)
-            
-            # إذا كان الهدف كائنًا جاهزًا
-            if isinstance(target, dict) and "message_id" in target:
-                entity = await self.client.get_entity(target["channel"])
-                return {
-                    "channel": utils.get_input_peer(entity),
-                    "message_id": target["message_id"]
-                }
-                
-            return None
-        except Exception as e:
-            logger.error(f"❌ خطأ في حل الهدف {target}: {e}")
-            return None
+    async def resolve_target(self, target):
+        # استخدم دالة tdlib_client مباشرة
+        return await self.client.resolve_target(target)
 
     async def execute_report(self, target, reason_obj, method_type, message, reports_per_account, cycle_delay):
-        """تنفذ بلاغًا فرديًا مع تحسينات في معالجة الأخطاء"""
         target_obj = await self.resolve_target(target)
         if not target_obj:
             self.stats["failed"] += reports_per_account
@@ -407,96 +379,25 @@ class AdvancedReporter:
                 await self.dynamic_delay(cycle_delay)
 
                 if method_type == "peer":
-                    # حساب الإبلاغ عن المستخدم/القناة باستخدام reason ككائن TL
-                    await self.client(functions.account.ReportPeerRequest(
-                        peer=target_obj,
+                    await self.client.report_peer(
+                        chat_id=target_obj.id,
                         reason=reason_obj,
                         message=message
-                    ))
+                    )
                     self.stats["success"] += 1
                     logger.info(f"✅ تم الإبلاغ بنجاح على {target}")
 
                 elif method_type == "message":
-                    # الإبلاغ عن رسالة مع اختيار السبب ديناميكيًا
-                    peer = target_obj["channel"]
-                    msg_id = target_obj["message_id"]
-
-                    # الخطوة الأولى: طلب الخيارات دون رسالة نصية (empty)
-                    result = await self.client(functions.messages.ReportRequest(
-                        peer=peer,
-                        id=[msg_id],
-                        option=b'',
-                        message=''
-                    ))
-                    # إذا لزم الاختيار:
-                    if isinstance(result, types.ReportResultChooseOption):
-                        # محاولة العثور على الخيار المناسب بناءً على reason_obj
-                        chosen_option = None
-                        # نطابق اسم السبب العربي أو المفتاح؟ هنا نطابق حسب النوع
-                        for opt in result.options:
-                            # opt.text قد يحتوي نص الخيار (مثل "Spam", "Child Abuse", إلخ.)
-                            if reason_obj.__class__.__name__.lower().find(opt.text.lower()) != -1 or reason_obj.__class__.__name__.lower() == opt.text.lower():
-                                chosen_option = opt.option
-                                break
-                        # إذا لم نجد تطابقًا، نأخذ الخيار الأول افتراضيًا
-                        if not chosen_option and result.options:
-                            chosen_option = result.options[0].option
-
-                        # الخطوة الثانية: إرسال البلاغ مع الخيار المحدد ونص الرسالة
-                        await self.client(functions.messages.ReportRequest(
-                            peer=peer,
-                            id=[msg_id],
-                            option=chosen_option or b'',
-                            message=message
-                        ))
-                    # في حال تم الإبلاغ مباشرة أو إضافة تعليق:
-                    self.stats["success"] += 1
-                    logger.info(f"✅ تم الإبلاغ بنجاح على الرسالة {msg_id}")
-
-                elif method_type == "photo":
-                    photos = await self.client.get_profile_photos(target_obj, limit=1)
-                    if not photos:
-                        logger.error(f"❌ لا توجد صورة للملف الشخصي للهدف: {target}")
-                        self.stats["failed"] += 1
-                        continue
-                    photo_input = types.InputPhoto(
-                        id=photos[0].id,
-                        access_hash=photos[0].access_hash,
-                        file_reference=photos[0].file_reference
-                    )
-                    await self.client(functions.account.ReportProfilePhotoRequest(
-                        peer=target_obj,
-                        photo_id=photo_input,
+                    # target_obj يجب أن يحتوي على chat_id و message_id
+                    await self.client.report_message(
+                        chat_id=target_obj["channel"].id if isinstance(target_obj, dict) else target_obj.id,
+                        message_ids=[target_obj["message_id"]] if isinstance(target_obj, dict) else [],
                         reason=reason_obj,
                         message=message
-                    ))
+                    )
                     self.stats["success"] += 1
-                    logger.info(f"✅ تم الإبلاغ بنجاح على صورة الملف الشخصي لـ {target}")
+                    logger.info(f"✅ تم الإبلاغ بنجاح على الرسالة {target}")
 
-                elif method_type == "sponsored":
-                    # الإبلاغ عن منشور ممول ديناميكيًا
-                    random_id = base64.urlsafe_b64decode(target)
-                    # الخطوة الأولى: طلب خيارات البلاغ دون تحديد الخيار
-                    result = await self.client(functions.messages.ReportSponsoredMessageRequest(
-                        random_id=random_id,
-                        option=b''
-                    ))
-                    # إذا لزم الأمر اختيار خيار:
-                    if isinstance(result, types.SponsoredMessageReportResultChooseOption):
-                        # اختر أول خيار (أو بناءً على شيء محدد)
-                        if result.options:
-                            chosen_option = result.options[0].option
-                            await self.client(functions.messages.ReportSponsoredMessageRequest(
-                                random_id=random_id,
-                                option=chosen_option
-                            ))
-                    self.stats["success"] += 1
-                    logger.info(f"✅ تم الإبلاغ بنجاح على المنشور الممول {target}")
-
-            except (FloodWaitError, PeerFloodError) as e:
-                wait_time = e.seconds if isinstance(e, FloodWaitError) else 300  # افتراضي 5 دقائق للـ PeerFlood
-                logger.warning(f"⏳ توقف بسبب {type(e).__name__}. سيتم الانتظار لـ {wait_time} ثانية.")
-                await asyncio.sleep(wait_time + 5)
             except Exception as e:
                 self.stats["failed"] += 1
                 logger.error(f"❌ فشل الإبلاغ: {type(e).__name__} - {e}")
@@ -504,40 +405,19 @@ class AdvancedReporter:
         return True
 
     async def execute_mass_report(self, targets, reason_obj, message):
-        """تنفذ بلاغًا جماعيًا على عدة منشورات دفعة واحدة مع تحسين الأداء"""
         if not targets:
             return
-        
         try:
-            # استخراج اسم القناة وكائناتها وقائمة الرسائل
             channel_username = targets[0]["channel"]
-            entity = await self.client.get_entity(channel_username)
-            peer = utils.get_input_peer(entity)
+            entity = await self.client.resolve_target(channel_username)
+            chat_id = entity.id
             message_ids = [t["message_id"] for t in targets]
-
-            # إرسال الطلب الأولي للحصول على خيارات البلاغ
-            result = await self.client(functions.messages.ReportRequest(
-                peer=peer,
-                id=message_ids,
-                option=b'',
-                message=''
-            ))
-            # إذا تم إرجاع خيارات، اختر المناسب وأعد الطلب
-            if isinstance(result, types.ReportResultChooseOption):
-                chosen_option = None
-                for opt in result.options:
-                    if reason_obj.__class__.__name__.lower().find(opt.text.lower()) != -1 or reason_obj.__class__.__name__.lower() == opt.text.lower():
-                        chosen_option = opt.option
-                        break
-                if not chosen_option and result.options:
-                    chosen_option = result.options[0].option
-                await self.client(functions.messages.ReportRequest(
-                    peer=peer,
-                    id=message_ids,
-                    option=chosen_option or b'',
-                    message=message
-                ))
-
+            await self.client.report_message(
+                chat_id=chat_id,
+                message_ids=message_ids,
+                reason=reason_obj,
+                message=message
+            )
             count = len(message_ids)
             self.stats["success"] += count
             logger.info(f"✅ تم إرسال بلاغ جماعي ناجح على {count} منشور.")
@@ -547,123 +427,55 @@ class AdvancedReporter:
 
 # --- دوال تشغيل العملية المحسنة ---
 async def do_session_report(session_data: dict, config: dict, context: ContextTypes.DEFAULT_TYPE):
-    """تنفذ جميع البلاغات المطلوبة لحساب (جلسة) واحد مع إدارة أفضل للموارد"""
-    session_str = session_data.get("session")
+    phone = session_data.get("phone")
     proxies = config.get("proxies", [])
     client, connected = None, False
-    
-    # تدوير البروكسي - اختيار الأفضل
     current_proxy = None
     max_retries = 3
     retry_count = 0
-    
     while retry_count < max_retries and context.user_data.get("active", True):
-        # تدوير البروكسي
         current_proxy = proxy_checker.rotate_proxy(proxies, current_proxy)
-        
         try:
-            # إعداد معلمات العميل
-            params = {
-                "api_id": API_ID,
-                "api_hash": API_HASH,
-                "timeout": 15,
-                "device_model": "Reporter Bot",
-                "system_version": "1.0",
-                "app_version": "1.0"
-            }
-            
-            if current_proxy:
-                # السر في قاعدة البيانات هو سلسلة هكس (تم تحويله مسبقًا)
-                secret_hex = current_proxy["secret"]
-                
-                # تأكد أن السر هو سلسلة نصية (str)
-                if isinstance(secret_hex, bytes):
-                    try:
-                        secret_hex = secret_hex.decode('utf-8')
-                    except UnicodeDecodeError:
-                        # إذا فشل التحويل، نستخدم التمثيل السداسي للبايتات
-                        secret_hex = secret_hex.hex()
-                
-                try:
-                    # تحويل السر السداسي إلى بايتات
-                    secret_bytes = bytes.fromhex(secret_hex)
-                except ValueError:
-                    logger.error(f"❌ سر البروكسي غير صالح: {secret_hex}")
-                    current_proxy['status'] = 'invalid_secret'
-                    retry_count += 1
-                    continue
-                
-                # إنشاء كائن البروكسي
-                params.update({
-                    "connection": ConnectionTcpMTProxyRandomizedIntermediate,
-                    "proxy": (
-                        current_proxy["server"],
-                        current_proxy["port"],
-                        secret_bytes
-                    )
-                })
-                logger.info(f"Using proxy: {current_proxy['server']} (converted secret)")
-            
-            client = TDLibClient(session_str, **params)
-            await client.connect()
-            
-            # التحقق من تفعيل الجلسة
+            client = TDLibClient(API_ID, API_HASH, phone, proxy=current_proxy)
+            await client.start()
             if not await client.is_user_authorized():
                 logger.warning("⚠️ الجلسة غير مصرح لها.")
                 return
-            
             connected = True
             reporter = AdvancedReporter(client, context)
             method_type = config.get("method_type")
             targets_list = config.get("targets", [])
             reports_per_account = config.get("reports_per_account", 1)
             cycle_delay = config.get("cycle_delay", 1)
-
-            # تنفيذ الإبلاغ حسب النوع
             if method_type == "mass":
                 await reporter.execute_mass_report(targets_list, config["reason_obj"], config.get("message", ""))
             else:
                 for _ in range(reports_per_account):
                     if not context.user_data.get("active", True): 
                         break
-                    
                     for target in targets_list:
                         if not context.user_data.get("active", True):
                             break
-                        
                         await reporter.execute_report(
                             target, config["reason_obj"], method_type,
                             config.get("message", ""), 1, cycle_delay
                         )
-
-            # تحديث الإحصائيات
             lock = context.bot_data.setdefault('progress_lock', asyncio.Lock())
             async with lock:
                 context.user_data["progress_success"] = context.user_data.get("progress_success", 0) + reporter.stats["success"]
                 context.user_data["progress_failed"] = context.user_data.get("progress_failed", 0) + reporter.stats["failed"]
-            
-            break  # الخروج عند النجاح
-
-        except (RPCError, TimeoutError) as e:
-            retry_count += 1
-            if current_proxy:
-                current_proxy['status'] = 'connection_failed'
-                current_proxy['error'] = str(e)
-                logger.warning(f"❌ فشل الاتصال بالبروكسي {current_proxy['server']}: {e}")
-            if retry_count < max_retries:
-                logger.info(f"⏳ إعادة المحاولة {retry_count}/{max_retries}...")
-                await asyncio.sleep(2)  # انتظار قبل إعادة المحاولة
-            else:
-                logger.error(f"❌ فشل الاتصال بعد {max_retries} محاولات.")
-        except (AuthKeyDuplicatedError, SessionPasswordNeededError) as e:
-            logger.error(f"❌ مشكلة في الجلسة: {type(e).__name__}")
             break
         except Exception as e:
+            retry_count += 1
             logger.error(f"❌ خطأ فادح في جلسة: {e}", exc_info=True)
-            break
+            if retry_count < max_retries:
+                logger.info(f"⏳ إعادة المحاولة {retry_count}/{max_retries}...")
+                await asyncio.sleep(2)
+            else:
+                logger.error(f"❌ فشل الاتصال بعد {max_retries} محاولات.")
         finally:
-            if client and client.is_connected():
-                await client.disconnect()
+            if client:
+                await client.stop()
 
 async def run_report_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
     config = context.user_data

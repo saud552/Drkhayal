@@ -433,81 +433,13 @@ class VerifiedReporter:
     async def resolve_target_enhanced(self, target: str | dict) -> dict:
         """حل الهدف مع معلومات إضافية للتتبع"""
         try:
-            target_info = {"original": target, "resolved": None, "type": None}
-            
-            # معالجة الأهداف من نوع القاموس (التي تأتي من parse_message_link)
-            if isinstance(target, dict) and 'channel' in target:
-                channel = target["channel"]
-                message_id = target["message_id"]
-                
-                try:
-                    # حل معرف القناة/المستخدم
-                    entity = await self.client.get_entity(channel)
-                    target_info.update({
-                        "resolved": {
-                            "channel": utils.get_input_peer(entity),
-                            "message_id": message_id
-                        },
-                        "type": "message",
-                        "channel_id": entity.id,
-                        "message_id": message_id
-                    })
-                    return target_info
-                except Exception as e:
-                    detailed_logger.error(f"❌ فشل في حل القناة {channel}: {e}")
-                    return None
-            
-            if isinstance(target, str) and 't.me/' in target:
-                # تحليل رابط الرسالة
-                if '/c/' in target or re.search(r'/\d+$', target):
-                    parsed = self.parse_message_link(target)
-                    if parsed:
-                        entity = await self.client.get_entity(parsed["channel"])
-                        target_info.update({
-                            "resolved": {
-                                "channel": utils.get_input_peer(entity),
-                                "message_id": parsed["message_id"]
-                            },
-                            "type": "message",
-                            "channel_id": entity.id,
-                            "message_id": parsed["message_id"]
-                        })
-                else:
-                    # رابط قناة أو مستخدم
-                    entity = await self.client.get_entity(target)
-                    target_info.update({
-                        "resolved": utils.get_input_peer(entity),
-                        "type": "peer",
-                        "entity_id": entity.id
-                    })
-            else:
-                # اسم مستخدم أو معرف
-                # التحقق من صحة اسم المستخدم أولاً
-                if isinstance(target, str) and not target.isdigit():
-                    if not self.validate_username(target):
-                        detailed_logger.error(f"❌ اسم مستخدم غير صالح: {target}")
-                        return None
-                        
-                entity = await self.client.get_entity(target)
-                target_info.update({
-                    "resolved": utils.get_input_peer(entity),
-                    "type": "peer",
-                    "entity_id": entity.id
-                })
-                
-            return target_info
-            
+            # استخدم tdlib_client.resolve_target مباشرة
+            resolved = await self.client.resolve_target(target)
+            if resolved:
+                return {"resolved": resolved, "type": "peer"}
+            return None
         except Exception as e:
-            # معالجة مفصلة لأنواع الأخطاء المختلفة
-            error_msg = str(e)
-            if "Nobody is using this username" in error_msg or "username is unacceptable" in error_msg:
-                detailed_logger.error(f"❌ اسم المستخدم غير صالح أو غير موجود: {target} - {error_msg}")
-            elif "Could not find the input entity" in error_msg:
-                detailed_logger.error(f"❌ لم يتم العثور على الهدف: {target} - {error_msg}")
-            elif "A wait of" in error_msg and "seconds is required" in error_msg:
-                detailed_logger.error(f"❌ يجب الانتظار قبل المحاولة مرة أخرى: {target} - {error_msg}")
-            else:
-                detailed_logger.error(f"❌ فشل في حل الهدف {target}: {e}")
+            detailed_logger.error(f"❌ فشل في حل الهدف {target}: {e}")
             return None
     
     def parse_message_link(self, link: str) -> dict | None:
@@ -568,36 +500,26 @@ class VerifiedReporter:
                 result = None
                 
                 if method_type == "peer":
-                    result = await self.client(functions.account.ReportPeerRequest(
-                        peer=target_info["resolved"],
+                    result = await self.client.report_peer(
+                        chat_id=target_info["resolved"].id,
                         reason=reason_obj,
                         message=message
-                    ))
+                    )
                     
                 elif method_type == "message":
-                    peer = target_info["resolved"]["channel"]
-                    msg_id = target_info["resolved"]["message_id"]
-                    
-                    # خطوة أولى: طلب الخيارات
-                    result = await self.client(functions.messages.ReportRequest(
-                        peer=peer,
-                        id=[msg_id],
-                        option=b'',
-                        message=''
-                    ))
-                    
-                    # خطوة ثانية: إرسال البلاغ مع الخيار
-                    if isinstance(result, types.ReportResultChooseOption) and result.options:
-                        chosen_option = result.options[0].option
-                        result = await self.client(functions.messages.ReportRequest(
-                            peer=peer,
-                            id=[msg_id],
-                            option=chosen_option,
+                    # يجب أن يكون target_info["resolved"] كائن رسالة أو dict
+                    chat_id = target_info["resolved"].id if hasattr(target_info["resolved"], 'id') else None
+                    msg_id = target["message_id"] if isinstance(target, dict) and "message_id" in target else None
+                    if chat_id and msg_id:
+                        result = await self.client.report_message(
+                            chat_id=chat_id,
+                            message_ids=[msg_id],
+                            reason=reason_obj,
                             message=message
-                        ))
+                        )
                 
                 # التحقق من نجاح البلاغ
-                verified = await self.verify_report_success(result, str(target), method_type)
+                verified = True if result else False
                 
                 if verified:
                     self.stats["success"] += 1
@@ -621,22 +543,6 @@ class VerifiedReporter:
                     self.stats["unconfirmed"] += 1
                     detailed_logger.warning(f"⚠️ بلاغ غير محقق - الهدف: {target}")
                     
-            except ChatWriteForbiddenError:
-                detailed_logger.error(f"❌ ممنوع من الكتابة في الدردشة - الهدف: {target}")
-                self.stats["failed"] += 1
-                
-            except UserBannedInChannelError:
-                detailed_logger.error(f"❌ المستخدم محظور في القناة - الهدف: {target}")
-                self.stats["failed"] += 1
-                
-            except MessageIdInvalidError:
-                detailed_logger.error(f"❌ معرف رسالة غير صالح - الهدف: {target}")
-                self.stats["failed"] += 1
-                
-            except FloodWaitError as e:
-                detailed_logger.warning(f"⏳ حد المعدل: انتظار {e.seconds} ثانية")
-                await asyncio.sleep(e.seconds + 1)
-                
             except Exception as e:
                 detailed_logger.error(f"❌ خطأ في البلاغ - الهدف: {target} - الخطأ: {e}")
                 self.stats["failed"] += 1
