@@ -31,7 +31,7 @@ except ImportError:
     OWNER_ID = 0
 
 # إعداد بريد المالك للاختبار
-OWNER_EMAIL = "test@example.com"  # يجب تحديث هذا ببريد المالك الفعلي
+OWNER_EMAIL = os.getenv('OWNER_EMAIL', "")  # يجب تحديد هذا في متغيرات البيئة
 
 # --- تعريف الثوابت والمتغيرات الخاصة بوحدة الإيميل ---
 logger = logging.getLogger(__name__)
