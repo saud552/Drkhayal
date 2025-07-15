@@ -548,6 +548,6 @@ def register_support_handlers(app):
             CallbackQueryHandler(cancel, pattern=r'^cancel$'),
             CommandHandler('cancel', cancel)
         ],
-        per_user=True
+        per_user=True,
     )
     app.add_handler(support_conv)

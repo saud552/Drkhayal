@@ -728,7 +728,17 @@ async def process_enhanced_session(session: dict, targets: list, reports_per_acc
         }
         
         if current_proxy:
-            secret_bytes = bytes.fromhex(current_proxy["secret"])
+            secret = current_proxy["secret"]
+            if isinstance(secret, str):
+                try:
+                    secret_bytes = bytes.fromhex(secret)
+                except ValueError:
+                    raise Exception(f"سر البروكسي غير صالح: {secret}")
+            elif isinstance(secret, bytes):
+                secret_bytes = secret
+            else:
+                raise Exception(f"نوع السر غير مدعوم: {type(secret)}")
+            
             params.update({
                 "connection": ConnectionTcpMTProxyRandomizedIntermediate,
                 "proxy": (current_proxy["server"], current_proxy["port"], secret_bytes)
