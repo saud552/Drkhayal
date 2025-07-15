@@ -1,0 +1,44 @@
+# متطلبات النظام المحسن - Enhanced System Requirements
+
+# مكتبات Telegram الأساسية
+python-telegram-bot==20.3
+telethon==1.28.5
+
+# مكتبات التشفير والأمان
+cryptography==41.0.3
+pyaes==1.6.1
+
+# مكتبات قاعدة البيانات
+sqlite3-utils==3.34
+sqlalchemy==2.0.19
+
+# مكتبات الشبكات والطلبات
+aiohttp==3.8.5
+requests==2.31.0
+httpx==0.24.1
+
+# مكتبات التحليل والبيانات
+pandas==2.0.3
+numpy==1.24.3
+
+# مكتبات السجلات والتوقيتات
+python-dateutil==2.8.2
+pytz==2023.3
+
+# مكتبات إضافية للنظام المحسن
+typing-extensions==4.7.1
+dataclasses==0.6
+hashlib3==1.0.1
+
+# مكتبات اختيارية للتحسينات
+uvloop==0.17.0  # لتحسين asyncio على Linux
+aiodns==3.0.0   # لتحسين DNS lookups
+
+# مكتبات التطوير (اختيارية)
+pytest==7.4.0
+pytest-asyncio==0.21.1
+black==23.7.0
+flake8==6.0.0
+
+# الحد الأدنى من Python
+# Python >= 3.8 مطلوب

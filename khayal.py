@@ -310,7 +310,6 @@ async def process_proxy_links(update: Update, context: ContextTypes.DEFAULT_TYPE
         # حفظ البروكسيات النشطة مرتبة حسب الجودة
         context.user_data['proxies'] = active_proxies
     
-    context.user_data['proxies'] = valid_proxies
     return await select_method_menu(update, context)
 
 async def select_method_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, is_query=False) -> int:
