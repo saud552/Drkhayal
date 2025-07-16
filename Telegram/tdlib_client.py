@@ -74,9 +74,28 @@ class TDLibClient:
             logger.error(f"خطأ في حل الهدف: {target} - {e}")
             return None
 
+    def _get_report_reason(self, reason_str):
+        """تحويل string إلى TDLib report reason object"""
+        reason_map = {
+            "spam": td_types.ChatReportReasonSpam(),
+            "child_abuse": td_types.ChatReportReasonChildAbuse(),
+            "pornography": td_types.ChatReportReasonPornography(),
+            "violence": td_types.ChatReportReasonViolence(),
+            "privacy": td_types.ChatReportReasonPersonalDetails(),
+            "drugs": td_types.ChatReportReasonIllegalDrugs(),
+            "fake": td_types.ChatReportReasonFake(),
+            "copyright": td_types.ChatReportReasonCopyright(),
+            "other": td_types.ChatReportReasonCustom(),
+        }
+        return reason_map.get(reason_str, td_types.ChatReportReasonCustom())
+
     async def report_peer(self, chat_id, reason, message=""):
         # إرسال بلاغ على مستخدم/قناة/مجموعة
         try:
+            # تحويل reason إلى object إذا كان string
+            if isinstance(reason, str):
+                reason = self._get_report_reason(reason)
+                
             return await self.client.invoke(
                 td_functions.reportChat(
                     chat_id=chat_id,
@@ -91,6 +110,10 @@ class TDLibClient:
     async def report_message(self, chat_id, message_ids, reason, message=""):
         # إرسال بلاغ على رسالة أو عدة رسائل
         try:
+            # تحويل reason إلى object إذا كان string
+            if isinstance(reason, str):
+                reason = self._get_report_reason(reason)
+                
             return await self.client.invoke(
                 td_functions.reportChatMessage(
                     chat_id=chat_id,

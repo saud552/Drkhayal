@@ -21,6 +21,7 @@ from Telegram.tdlib_client import TDLibClient
 from encryption import decrypt_session
 from config import API_ID, API_HASH
 from add import safe_db_query
+# from pytdlib.api import types as td_types  # غير مستخدم حالياً
 
 logger = logging.getLogger(__name__)
 # استيراد DB_PATH من config.py
@@ -62,16 +63,17 @@ class RateLimitExceeded(Exception):
     pass
 
 # === أنواع البلاغات مع معرفات التأكيد ===
+# استخدام strings بسيطة مؤقتاً حتى نتأكد من أنواع TDLib الصحيحة
 REPORT_TYPES_ENHANCED = {
-    2: ("رسائل مزعجة", types.InputReportReasonSpam(), "spam"),
-    3: ("إساءة أطفال", types.InputReportReasonChildAbuse(), "child_abuse"),
-    4: ("محتوى جنسي", types.InputReportReasonPornography(), "pornography"),
-    5: ("عنف", types.InputReportReasonViolence(), "violence"),
-    6: ("انتهاك خصوصية", types.InputReportReasonPersonalDetails(), "privacy"),
-    7: ("مخدرات", types.InputReportReasonIllegalDrugs(), "drugs"),
-    8: ("حساب مزيف", types.InputReportReasonFake(), "fake"),
-    9: ("حقوق النشر", types.InputReportReasonCopyright(), "copyright"),
-    11: ("أخرى", types.InputReportReasonOther(), "other"),
+    2: ("رسائل مزعجة", "spam", "spam"),
+    3: ("إساءة أطفال", "child_abuse", "child_abuse"),
+    4: ("محتوى جنسي", "pornography", "pornography"),
+    5: ("عنف", "violence", "violence"),
+    6: ("انتهاك خصوصية", "privacy", "privacy"),
+    7: ("مخدرات", "drugs", "drugs"),
+    8: ("حساب مزيف", "fake", "fake"),
+    9: ("حقوق النشر", "copyright", "copyright"),
+    11: ("أخرى", "other", "other"),
 }
 
 class EnhancedProxyChecker:
@@ -355,14 +357,12 @@ class VerifiedReporter:
     async def verify_report_success(self, report_result: Any, target: str, report_type: str) -> bool:
         """التحقق من نجاح البلاغ الفعلي"""
         try:
-            # تحليل نتيجة البلاغ
-            if isinstance(report_result, types.ReportResultAddComment):
-                detailed_logger.info(f"✅ تم قبول البلاغ مع طلب تعليق - الهدف: {target}")
-                return True
-                
-            elif isinstance(report_result, types.ReportResultChooseOption):
-                detailed_logger.info(f"✅ تم قبول البلاغ مع خيارات - الهدف: {target}")
-                return True
+            # تحليل نتيجة البلاغ (TDLib تعطي نتائج مختلفة)
+            if report_result and hasattr(report_result, '@type'):
+                result_type = report_result.get('@type', '')
+                if result_type in ['ok', 'reportChatResult']:
+                    detailed_logger.info(f"✅ تم قبول البلاغ بنجاح - الهدف: {target}")
+                    return True
                 
             elif hasattr(report_result, 'success') and report_result.success:
                 detailed_logger.info(f"✅ تم قبول البلاغ بنجاح - الهدف: {target}")
