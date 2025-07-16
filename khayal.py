@@ -215,7 +215,7 @@ async def process_proxy_links(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(f"⚠️ تم تقليل عدد البروكسيات إلى {MAX_PROXIES} (الحد الأقصى)")
 
     msg = await update.message.reply_text(f"🔍 جاري الفحص المحسن لـ {len(input_links)} بروكسي...")
-    # في جميع مواضع session_str أو StringSession، سيتم التعامل مع معرف الهاتف أو مسار الجلسة بدلاً من ذلك
+    # في TDLib، سيتم التعامل مع معرف الهاتف ومسار الجلسة لإدارة الحسابات
     # مثال: عند إضافة حساب جديد أو التحقق من الجلسة، استخدم TDLibClient(phone)
     session_id = accounts[0]["session_id"]
 

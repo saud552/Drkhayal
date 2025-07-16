@@ -751,14 +751,14 @@ async def process_single_account(session, targets, reports_per_account, config, 
                     async with config["lock"]:
                         config["progress_success"] += 1
                         
-                except (FloodWaitError, PeerFloodError) as e:
-                    # أخطاء مؤقتة من تيليثون
+                except TemporaryFailure as e:
+                    # أخطاء مؤقتة من TDLib
                     logger.warning(f"فشل مؤقت للحساب {session_id}: {str(e)}")
                     account_temp_failures += 1
                     async with config["lock"]:
                         config["failed_reports"] += 1
                         
-                except (AuthKeyDuplicatedError, SessionPasswordNeededError) as e:
+                except (SessionExpired, PermanentFailure) as e:
                     # أخطاء دائمة في الجلسة
                     logger.error(f"فشل دائم للحساب {session_id}: {str(e)}")
                     remaining = total_reports_for_account - (account_success + account_temp_failures)

@@ -54,7 +54,7 @@ pip install -r requirements_enhanced.txt
 pip install -r requirements.txt
 
 # أو تثبيت يدوياً
-pip install python-telegram-bot telethon cryptography aiohttp
+pip install python-telegram-bot pytdlib cryptography aiohttp
 ```
 
 ### الخطوة 4: إعداد المتغيرات

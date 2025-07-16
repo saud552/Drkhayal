@@ -184,7 +184,7 @@ class EnhancedProxyChecker:
                 except (TypeError, ValueError):
                     raise ProxyTestFailed(f"نوع سر غير مدعوم: {type(secret)}")
                 
-            # telethon تتوقع السر كـ string وليس bytes
+            # TDLib يتعامل مع البروكسي بشكل مختلف عن Telethon
             params["proxy"] = (
                 proxy_info["server"],
                 proxy_info["port"],

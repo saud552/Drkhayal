@@ -395,42 +395,66 @@ async def add_account_method(update: Update, context: ContextTypes.DEFAULT_TYPE)
             return await start_from_query(query, context)
         
         await query.edit_message_text(
-            "🔑 الرجاء إرسال كود جلسة Telethon الجاهز:",
+            "📱 الرجاء إرسال رقم الهاتف للحساب الجديد (مع رمز البلد):\n\n"
+            "📌 مثال: +201234567890",
             reply_markup=None
         )
         return ADD_ACCOUNT_SESSION
 
 async def add_account_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    session_str = update.message.text.strip()
+    phone = update.message.text.strip()
+    
+    # التحقق من صحة رقم الهاتف
+    import re
+    phone_pattern = r'^\+?[1-9]\d{1,14}$'
+    if not re.match(phone_pattern, phone):
+        await update.message.reply_text(
+            "❌ رقم الهاتف غير صالح. الرجاء إدخال رقم صحيح مع رمز البلد.\n"
+            "📌 مثال: +201234567890"
+        )
+        return ADD_ACCOUNT_SESSION
     
     try:
-        # التحقق من صحة الجلسة
+        # إنشاء عميل TDLib جديد
         client = TDLibClient(
             API_ID,
             API_HASH,
-            session_str,
+            phone,
             session_dir='tdlib_sessions',
         )
+        
         await client.start()
-        me = await client.get_me()
         
-        if not me:
-            raise ValueError("الجلسة غير صالحة")
-        
-        context.user_data['session_str'] = session_str
-        context.user_data['phone'] = me.phone
-        context.user_data['username'] = me.username
-        
-        await update.message.reply_text(
-            "📁 الرجاء إدخال اسم الفئة التي تريد تخزين الحساب فيها:"
-        )
-        return ADD_ACCOUNT_CATEGORY
+        # التحقق من حالة التفويض
+        if await client.is_user_authorized():
+            # المستخدم مفوض مسبقاً
+            me = await client.get_me()
+            context.user_data['phone'] = phone
+            context.user_data['username'] = getattr(me, 'username', None)
+            context.user_data['client'] = client
+            
+            await update.message.reply_text(
+                f"✅ تم العثور على جلسة موجودة للرقم: {phone}\n"
+                "📁 الرجاء إدخال اسم الفئة التي تريد تخزين الحساب فيها:"
+            )
+            return ADD_ACCOUNT_CATEGORY
+        else:
+            # يحتاج رمز التحقق
+            await client.send_code()
+            context.user_data['phone'] = phone
+            context.user_data['client'] = client
+            
+            await update.message.reply_text(
+                f"📱 تم إرسال رمز التحقق إلى {phone}\n"
+                "🔑 الرجاء إدخال رمز التحقق:"
+            )
+            return ADD_ACCOUNT_CODE
         
     except Exception as e:
-        logger.error(f"Session validation error: {e}")
+        logger.error(f"Phone number validation error: {e}")
         await update.message.reply_text(
-            f"❌ فشل التحقق من الجلسة: {str(e)}\n"
-            "الرجاء المحاولة مرة أخرى أو استخدام طريقة أخرى."
+            f"❌ خطأ في رقم الهاتف: {str(e)}\n"
+            "الرجاء المحاولة مرة أخرى."
         )
         return ADD_ACCOUNT_METHOD
 
@@ -459,7 +483,8 @@ async def add_account_category(update: Update, context: ContextTypes.DEFAULT_TYP
     return ADD_ACCOUNT_PHONE
 
 async def save_account_from_session(update: Update, context: ContextTypes.DEFAULT_TYPE, category_name: str):
-    session_str = context.user_data['session_str']
+    # بدلاً من session_str، نحصل على بيانات TDLib
+    client = context.user_data.get('client')
     phone = context.user_data['phone']
     username = context.user_data.get('username')
     
@@ -473,7 +498,15 @@ async def save_account_from_session(update: Update, context: ContextTypes.DEFAUL
             'system_version': device['system_version']
         }
         
-        # تشفير الجلسة
+        # إنشاء بيانات جلسة TDLib وتشفيرها
+        session_data = {
+            'phone': phone,
+            'session_path': client.session_path,
+            'api_id': client.api_id,
+            'api_hash': client.api_hash
+        }
+        import json
+        session_str = json.dumps(session_data)
         encrypted_session = encrypt_session(session_str)
         
         # الحصول على معرف الفئة باستخدام الاستعلام الآمن
@@ -683,37 +716,48 @@ async def add_account_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     
     client = context.user_data.get('client')
     phone = context.user_data.get('phone')
-    phone_code_hash = context.user_data.get('phone_code_hash')
-    category_name = context.user_data.get('category_name')
     
-    if not all([client, phone, phone_code_hash, category_name]):
+    if not all([client, phone]):
         await update.message.reply_text("❌ انتهت جلسة التسجيل. الرجاء البدء من جديد.")
         return ConversationHandler.END
     
     try:
-        # محاولة تسجيل الدخول
-        await client.sign_in(
-            phone=phone,
-            code=code,
-            phone_code_hash=phone_code_hash
-        )
-    except SessionPasswordNeededError:
-        await update.message.reply_text(
-            "🔒 هذا الحساب محمي بكلمة مرور ثنائية.\n"
-            "🔑 أرسل كلمة المرور الآن:\n"
-            "❌ للإلغاء: /cancel"
-        )
-        return ADD_ACCOUNT_PASSWORD
-    except PhoneCodeInvalidError:
-        await update.message.reply_text("❌ رمز التحقق غير صحيح. الرجاء المحاولة مرة أخرى.")
-        return ADD_ACCOUNT_CODE
-    except PhoneCodeExpiredError:
-        await update.message.reply_text("❌ رمز التحقق منتهي الصلاحية. الرجاء البدء من جديد.")
-        await client.disconnect()
-        return ConversationHandler.END
+        # محاولة تسجيل الدخول باستخدام TDLib
+        result = await client.sign_in(code)
+        
+        if result and await client.is_user_authorized():
+            # نجح تسجيل الدخول
+            me = await client.get_me()
+            context.user_data['username'] = getattr(me, 'username', None)
+            
+            await update.message.reply_text(
+                f"✅ تم تسجيل الدخول بنجاح!\n"
+                f"📱 الهاتف: {phone}\n"
+                "📁 الرجاء إدخال اسم الفئة لحفظ الحساب:"
+            )
+            return ADD_ACCOUNT_CATEGORY
+        else:
+            # قد يحتاج كلمة مرور ثنائية
+            await update.message.reply_text(
+                "🔒 هذا الحساب محمي بكلمة مرور ثنائية.\n"
+                "🔑 أرسل كلمة المرور الآن:\n"
+                "❌ للإلغاء: /cancel"
+            )
+            return ADD_ACCOUNT_PASSWORD
+            
     except Exception as e:
+        error_str = str(e).lower()
         logger.error(f"Sign in error: {e}")
-        await update.message.reply_text(f"❌ فشل تسجيل الدخول: {str(e)}")
+        
+        if "invalid" in error_str or "wrong" in error_str:
+            await update.message.reply_text("❌ رمز التحقق غير صحيح. الرجاء المحاولة مرة أخرى.")
+            return ADD_ACCOUNT_CODE
+        elif "expired" in error_str:
+            await update.message.reply_text("❌ رمز التحقق منتهي الصلاحية. الرجاء البدء من جديد.")
+            await client.stop()
+            return ConversationHandler.END
+        else:
+            await update.message.reply_text(f"❌ فشل تسجيل الدخول: {str(e)}")
         await client.disconnect()
         return ConversationHandler.END
     
@@ -730,14 +774,26 @@ async def add_account_password(update: Update, context: ContextTypes.DEFAULT_TYP
         return ConversationHandler.END
     
     try:
-        # تسجيل الدخول بكلمة المرور
-        await client.sign_in(password=password)
-        return await finalize_account_registration(update, context, client)
+        # تسجيل الدخول بكلمة المرور ثنائية باستخدام TDLib
+        result = await client.sign_in(code=None, password=password)
+        
+        if result and await client.is_user_authorized():
+            return await finalize_account_registration(update, context, client)
+        else:
+            await update.message.reply_text("❌ كلمة المرور غير صحيحة. الرجاء المحاولة مرة أخرى.")
+            return ADD_ACCOUNT_PASSWORD
+            
     except Exception as e:
         logger.error(f"2FA error: {e}")
-        await update.message.reply_text(f"❌ فشل تسجيل الدخول: {str(e)}")
-        await client.disconnect()
-        return ConversationHandler.END
+        error_str = str(e).lower()
+        
+        if "password" in error_str or "invalid" in error_str:
+            await update.message.reply_text("❌ كلمة المرور غير صحيحة. الرجاء المحاولة مرة أخرى.")
+            return ADD_ACCOUNT_PASSWORD
+        else:
+            await update.message.reply_text(f"❌ فشل تسجيل الدخول: {str(e)}")
+            await client.stop()
+            return ConversationHandler.END
 
 async def finalize_account_registration(update: Update, context: ContextTypes.DEFAULT_TYPE, client: TDLibClient) -> int:
     """إكمال عملية تسجيل الحساب مع محاكاة تفاصيل جهاز وتطبيق رسمي"""
@@ -764,8 +820,16 @@ async def finalize_account_registration(update: Update, context: ContextTypes.DE
                 raise ValueError("الفئة غير موجودة")
             category_id = row[0]
 
-        # 5. حفظ جلسة Telethon مشفّرة
-        session_str = client.session.save()
+        # 5. حفظ معلومات جلسة TDLib مشفّرة
+        # في TDLib، الجلسة تُحفظ كملفات، لذا سنحفظ معرف الهاتف ومسار الجلسة
+        session_data = {
+            'phone': client.phone,
+            'session_path': client.session_path,
+            'api_id': client.api_id,
+            'api_hash': client.api_hash
+        }
+        import json
+        session_str = json.dumps(session_data)
         encrypted_session = encrypt_session(session_str)
 
         # 6. إنشاء معرف فريد للمستخدم
@@ -1074,16 +1138,22 @@ async def check_next_account(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     # فحص الحساب
     try:
-        async with TDLibClient(
-            session_str,
-            API_ID,
-            API_HASH,
-            device_model=device_info.get('device_model', 'Unknown'),
-            system_version=device_info.get('system_version', 'Unknown'),
-            timeout=SESSION_TIMEOUT
-        ) as client:
-            await client.connect()
-            
+        # فك تشفير بيانات الجلسة
+        decrypted_session = decrypt_session(session_str)
+        import json
+        session_data = json.loads(decrypted_session)
+        
+        # إنشاء عميل TDLib باستخدام البيانات المحفوظة
+        client = TDLibClient(
+            api_id=session_data.get('api_id', API_ID),
+            api_hash=session_data.get('api_hash', API_HASH),
+            phone=session_data['phone'],
+            session_dir='tdlib_sessions'
+        )
+        
+        await client.start()
+        
+        if await client.is_user_authorized():
             # الحصول على معلومات الحساب
             me = await client.get_me()
             
@@ -1111,10 +1181,25 @@ async def check_next_account(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 'status': status,
                 'status_text': status_text,
                 'restrictions': restrictions,
-                'username': me.username if me else None,
-                'user_id': me.id if me else None,
+                'username': getattr(me, 'username', None) if me else None,
+                'user_id': getattr(me, 'id', None) if me else None,
                 'error': None
             })
+        else:
+            # المستخدم غير مفوض
+            context.user_data['check_results'].append({
+                'account_id': account_id,
+                'phone': phone,
+                'status': "❌",
+                'status_text': "❌ غير مفوض",
+                'restrictions': None,
+                'username': None,
+                'user_id': None,
+                'error': "غير مفوض"
+            })
+        
+        # إغلاق العميل
+        await client.stop()
             
     except Exception as e:
         # تخزين الخطأ
@@ -1263,15 +1348,22 @@ async def recheck_account(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     
     # إعادة الفحص
     try:
-        async with TDLibClient(
-            session_str,
-            API_ID,
-            API_HASH,
-            device_model=device_info.get('device_model', 'Unknown'),
-            system_version=device_info.get('system_version', 'Unknown'),
-            timeout=SESSION_TIMEOUT
-        ) as client:
-            await client.connect()
+        # فك تشفير بيانات الجلسة
+        decrypted_session = decrypt_session(session_str)
+        import json
+        session_data = json.loads(decrypted_session)
+        
+        # إنشاء عميل TDLib باستخدام البيانات المحفوظة
+        client = TDLibClient(
+            api_id=session_data.get('api_id', API_ID),
+            api_hash=session_data.get('api_hash', API_HASH),
+            phone=session_data['phone'],
+            session_dir='tdlib_sessions'
+        )
+        
+        await client.start()
+        
+        if await client.is_user_authorized():
             
             # الحصول على معلومات الحساب
             me = await client.get_me()
@@ -1300,11 +1392,27 @@ async def recheck_account(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                         'status': status,
                         'status_text': status_text,
                         'restrictions': restrictions,
-                        'username': me.username if me else None,
-                        'user_id': me.id if me else None,
+                        'username': getattr(me, 'username', None) if me else None,
+                        'user_id': getattr(me, 'id', None) if me else None,
                         'error': None
                     })
                     break
+        else:
+            # المستخدم غير مفوض
+            for result in context.user_data['check_results']:
+                if result['account_id'] == account_id:
+                    result.update({
+                        'status': "❌",
+                        'status_text': "❌ غير مفوض",
+                        'restrictions': None,
+                        'username': None,
+                        'user_id': None,
+                        'error': "غير مفوض"
+                    })
+                    break
+        
+        # إغلاق العميل
+        await client.stop()
     
     except Exception as e:
         # تحديث النتائج بالخطأ
