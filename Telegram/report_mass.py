@@ -4,9 +4,8 @@ import asyncio
 import re
 import time
 from datetime import datetime, timedelta
-from telethon import TelegramClient
-from telethon.sessions import StringSession
-from telethon.errors.rpcerrorlist import ChannelPrivateError, UsernameNotOccupiedError, FloodWaitError, PeerIdInvalidError
+# استبدال imports Telethon بـ TDLib equivalents
+# من TDLib سيتم استخدام exceptions مختلفة
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ConversationHandler,
